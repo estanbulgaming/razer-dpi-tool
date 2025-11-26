@@ -241,21 +241,51 @@ class LogitechHIDPP:
     # Software ID to identify our requests (4 bits, 1-15)
     SOFTWARE_ID = 0x07
 
-    def __init__(self, device_path):
+    def __init__(self, device_path, device_index=None):
         self.device = hid.device()
         self.device.open_path(device_path)
         self.device.set_nonblocking(False)  # Blocking mode for reliable reads
         self.dpi_feature_index = None
-        # For wired devices, use 0xFF (direct device access)
-        self.device_index = 0xFF
+        # Device index will be auto-detected if not specified
+        self.device_index = device_index
 
     def close(self):
         self.device.close()
+
+    def detect_device_index(self):
+        """Try different device indices to find one that works"""
+        # Try common indices: 0xFF (wired), 0x01 (first paired device)
+        for idx in [0xFF, 0x01]:
+            try:
+                self.device_index = idx
+                # Try to ping IRoot feature
+                msg = [0x10, idx, 0x00, (0x00 << 4) | self.SOFTWARE_ID, 0x00, 0x01, 0x00]
+                self.device.write(msg)
+
+                import time
+                start = time.time()
+                while (time.time() - start) < 0.5:
+                    data = self.device.read(64, timeout_ms=100)
+                    if data and len(data) >= 2:
+                        if data[0] in [0x10, 0x11] and data[1] == idx:
+                            print(f"DEBUG: Device index {hex(idx)} works!")
+                            return idx
+            except:
+                continue
+
+        # Default to 0xFF if nothing works
+        print("DEBUG: Could not detect device index, using 0xFF")
+        self.device_index = 0xFF
+        return 0xFF
 
     def send_short(self, feature_idx, func_id, params=None):
         """Send a short HID++ 2.0 message (7 bytes)"""
         if params is None:
             params = []
+
+        # Auto-detect device index if not set
+        if self.device_index is None:
+            self.detect_device_index()
 
         # Format: [report_id, device_idx, feature_idx, func_id|sw_id, params...]
         msg = [
@@ -334,6 +364,10 @@ class LogitechHIDPP:
 
     def get_feature_index(self, feature_id):
         """Get the index of a feature using IRoot (feature 0x0000)"""
+        # Auto-detect device index if not set
+        if self.device_index is None:
+            self.detect_device_index()
+
         # IRoot.getFeature(featureId) - function 0
         params = [(feature_id >> 8) & 0xFF, feature_id & 0xFF]
         response = self.send_short(0x00, 0x00, params)
