@@ -10,23 +10,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-csharp:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build with .NET Framework
-        shell: cmd
-        run: |
-          "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe" /target:winexe /out:RazerDPI.exe RazerDPI.cs
-
-      - name: Upload C# artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: RazerDPI-CSharp
-          path: RazerDPI.exe
-
-  build-python:
+  build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,34 +26,27 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --name RazerDPI-Python razer_dpi.py
+          pyinstaller --onefile --windowed --name RazerDPI razer_dpi.py
 
-      - name: Upload Python artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RazerDPI-Python
-          path: dist/RazerDPI-Python.exe
+          name: RazerDPI
+          path: dist/RazerDPI.exe
 
   release:
-    needs: [build-csharp, build-python]
+    needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Download C# artifact
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: RazerDPI-CSharp
-
-      - name: Download Python artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: RazerDPI-Python
+          name: RazerDPI
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            RazerDPI.exe
-            RazerDPI-Python.exe
+          files: RazerDPI.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
