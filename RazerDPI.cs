@@ -16,6 +16,7 @@ class RazerDevice
     public ushort OutputReportLength;
     public ushort Usage;
     public ushort UsagePage;
+    public bool ReadOnly;
 }
 
 class RazerDPI : Form
@@ -568,7 +569,7 @@ class RazerDPI : Form
                                     Log("Found Razer device: VID=0x" + attrs.VendorID.ToString("X4") + " PID=0x" + pidKey + miInfo + colInfo);
                                     Log("  Path: " + devicePath);
                                     Log("  Name: " + productName);
-                                    Log("  IsKnownMouse: " + isKnown.ToString());
+                                    Log("  IsKnownMouse: " + isKnown.ToString() + ", ReadOnly: " + readOnly.ToString());
                                     Log("  FeatureReportLen: " + featureLen.ToString() + ", OutputReportLen: " + outputLen.ToString());
                                     Log("  UsagePage: 0x" + usagePage.ToString("X4") + ", Usage: 0x" + usage.ToString("X4"));
 
@@ -576,12 +577,13 @@ class RazerDPI : Form
                                     {
                                         Path = devicePath,
                                         ProductID = attrs.ProductID,
-                                        Name = productName + " (0x" + pidKey + miInfo + colInfo + capsInfo + ")",
+                                        Name = productName + " (0x" + pidKey + miInfo + colInfo + capsInfo + (readOnly ? " RO" : "") + ")",
                                         IsKnownMouse = isKnown,
                                         FeatureReportLength = featureLen,
                                         OutputReportLength = outputLen,
                                         Usage = usage,
-                                        UsagePage = usagePage
+                                        UsagePage = usagePage,
+                                        ReadOnly = readOnly
                                     });
                                 }
                             }
@@ -668,6 +670,12 @@ class RazerDPI : Form
 
         Log("Selected device: " + selectedDevice.Name);
         Log("Device path: " + selectedDevice.Path);
+        Log("Device ReadOnly: " + selectedDevice.ReadOnly.ToString());
+
+        if (selectedDevice.ReadOnly)
+        {
+            Log("WARNING: Device was opened read-only during enumeration");
+        }
 
         IntPtr handle = CreateFile(selectedDevice.Path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
         if (handle == INVALID_HANDLE_VALUE)
