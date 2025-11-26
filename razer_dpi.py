@@ -554,13 +554,41 @@ def set_razer_dpi(device_info, dpi: int) -> bool:
 
 def set_logitech_dpi(device_info, dpi: int) -> bool:
     """Set DPI on Logitech mouse using HID++"""
-    try:
-        hidpp = LogitechHIDPP(device_info['path'])
-        hidpp.set_dpi(dpi)
-        hidpp.close()
-        return True
-    except Exception as e:
-        raise Exception(f"Failed to set DPI: {e}")
+    pid = device_info.get('product_id', 0)
+
+    # Get all interfaces for this device and try each one
+    interfaces = find_logitech_devices_by_pid(pid)
+
+    # Try order: usage 2, usage 1, then any other
+    try_order = []
+    if 2 in interfaces:
+        try_order.append(interfaces[2])
+    if 1 in interfaces:
+        try_order.append(interfaces[1])
+    for usage, dev in interfaces.items():
+        if usage not in [1, 2]:
+            try_order.append(dev)
+
+    # Also add the originally selected device if not in list
+    if device_info not in try_order:
+        try_order.insert(0, device_info)
+
+    last_error = None
+    for dev in try_order:
+        try:
+            print(f"DEBUG: Trying PID=0x{dev.get('product_id', 0):04X}, usage={dev.get('usage', 0)}, usage_page=0x{dev.get('usage_page', 0):04X}, iface={dev.get('interface_number', -1)}")
+
+            hidpp = LogitechHIDPP(dev['path'])
+            hidpp.set_dpi(dpi)
+            hidpp.close()
+            print(f"DEBUG: Success with usage={dev.get('usage', 0)}")
+            return True
+        except Exception as e:
+            last_error = e
+            print(f"DEBUG: Failed with usage={dev.get('usage', 0)}: {e}")
+            continue
+
+    raise Exception(f"Failed to set DPI: {last_error}")
 
 
 def set_dpi(device_info, brand: str, dpi: int) -> bool:
