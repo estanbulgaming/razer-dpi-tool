@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Drawing;
+using System.IO;
+using System.Text;
 
 class RazerDevice
 {
@@ -195,9 +197,32 @@ class RazerDPI : Form
     ComboBox deviceCombo;
     List<RazerDevice> foundDevices;
     RazerDevice selectedDevice;
+    StringBuilder log;
+    string logPath;
+
+    void Log(string message)
+    {
+        string line = DateTime.Now.ToString("HH:mm:ss") + " " + message;
+        log.AppendLine(line);
+    }
+
+    void SaveLog()
+    {
+        try
+        {
+            File.WriteAllText(logPath, log.ToString());
+        }
+        catch { }
+    }
 
     public RazerDPI()
     {
+        log = new StringBuilder();
+        logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "razer_dpi_log.txt");
+        Log("=== Razer DPI Tool Started ===");
+        Log("OS: " + Environment.OSVersion.ToString());
+        Log("64-bit: " + Environment.Is64BitOperatingSystem.ToString());
+
         Text = "Razer DPI Tool";
         Size = new Size(340, 360);
         FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -383,14 +408,20 @@ class RazerDPI : Form
 
     List<RazerDevice> FindAllRazerDevices()
     {
+        Log("--- Scanning for devices ---");
         List<RazerDevice> devices = new List<RazerDevice>();
         Dictionary<string, int> productIdCount = new Dictionary<string, int>();
 
         Guid hidGuid;
         HidD_GetHidGuid(out hidGuid);
+        Log("HID GUID: " + hidGuid.ToString());
 
         IntPtr deviceInfoSet = SetupDiGetClassDevs(ref hidGuid, IntPtr.Zero, IntPtr.Zero, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
-        if (deviceInfoSet == INVALID_HANDLE_VALUE) return devices;
+        if (deviceInfoSet == INVALID_HANDLE_VALUE)
+        {
+            Log("ERROR: SetupDiGetClassDevs failed");
+            return devices;
+        }
 
         try
         {
@@ -451,6 +482,11 @@ class RazerDPI : Form
                                         productIdCount[pidKey] = 1;
                                     }
 
+                                    Log("Found Razer device: VID=0x" + attrs.VendorID.ToString("X4") + " PID=0x" + pidKey + " #" + ifaceNum.ToString());
+                                    Log("  Path: " + devicePath);
+                                    Log("  Name: " + productName);
+                                    Log("  IsKnownMouse: " + isKnown.ToString());
+
                                     devices.Add(new RazerDevice
                                     {
                                         Path = devicePath,
@@ -475,6 +511,8 @@ class RazerDPI : Form
         {
             SetupDiDestroyDeviceInfoList(deviceInfoSet);
         }
+        Log("Total Razer devices found: " + devices.Count.ToString());
+        SaveLog();
         return devices;
     }
 
@@ -513,35 +551,56 @@ class RazerDPI : Form
 
     void SetDPI(int dpi)
     {
+        Log("--- SetDPI called: " + dpi.ToString() + " ---");
+
         if (selectedDevice == null)
         {
+            Log("ERROR: No device selected");
             MessageBox.Show("No device selected!\nClick Refresh to scan.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             resultLabel.Text = "Failed!";
             resultLabel.ForeColor = Color.Red;
+            SaveLog();
             return;
         }
+
+        Log("Selected device: " + selectedDevice.Name);
+        Log("Device path: " + selectedDevice.Path);
 
         IntPtr handle = CreateFile(selectedDevice.Path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
         if (handle == INVALID_HANDLE_VALUE)
         {
-            MessageBox.Show("Cannot open device. Try running as Administrator.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            int openError = Marshal.GetLastWin32Error();
+            Log("ERROR: CreateFile failed with error: " + openError.ToString());
+            MessageBox.Show("Cannot open device. Try running as Administrator.\nError: " + openError.ToString(), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             resultLabel.Text = "Failed!";
             resultLabel.ForeColor = Color.Red;
+            SaveLog();
             return;
         }
+        Log("CreateFile succeeded, handle: " + handle.ToString());
 
         try
         {
             byte[] report = BuildDPIReport(dpi);
-            if (HidD_SetFeature(handle, report, (uint)report.Length))
+            Log("Report built, length: " + report.Length.ToString());
+            Log("Report hex: " + BitConverter.ToString(report, 0, 20));
+
+            bool result = HidD_SetFeature(handle, report, (uint)report.Length);
+            int error = Marshal.GetLastWin32Error();
+
+            Log("HidD_SetFeature result: " + result.ToString());
+            Log("GetLastWin32Error: " + error.ToString());
+
+            if (result)
             {
+                Log("SUCCESS: DPI set to " + dpi.ToString());
                 resultLabel.Text = "DPI set to " + dpi.ToString();
                 resultLabel.ForeColor = Color.Green;
             }
             else
             {
-                int error = Marshal.GetLastWin32Error();
-                MessageBox.Show("Failed to set DPI. Error code: " + error.ToString() + "\nTry selecting a different device.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Log("FAILED: HidD_SetFeature returned false, error: " + error.ToString());
+                MessageBox.Show("Failed to set DPI. Error code: " + error.ToString() + "\nTry selecting a different device.\nCheck razer_dpi_log.txt for details.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 resultLabel.Text = "Failed!";
                 resultLabel.ForeColor = Color.Red;
             }
@@ -549,6 +608,8 @@ class RazerDPI : Form
         finally
         {
             CloseHandle(handle);
+            Log("Handle closed");
+            SaveLog();
         }
     }
 
