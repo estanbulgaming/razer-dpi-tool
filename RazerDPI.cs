@@ -1,13 +1,19 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Drawing;
 
+class RazerDevice
+{
+    public string Path;
+    public ushort ProductID;
+    public string Name;
+}
+
 class RazerDPI : Form
 {
-    // Razer USB IDs
     const ushort RAZER_VENDOR_ID = 0x1532;
-    static readonly ushort[] DEATHADDER_V3_PIDS = { 0x00B6, 0x00B7, 0x00B8, 0x00B9 };
 
     // HID API
     [DllImport("hid.dll", SetLastError = true)]
@@ -37,6 +43,18 @@ class RazerDPI : Form
     [DllImport("hid.dll", SetLastError = true)]
     static extern bool HidD_SetFeature(IntPtr hidDeviceObject, byte[] reportBuffer, uint reportBufferLength);
 
+    [DllImport("hid.dll", SetLastError = true)]
+    static extern bool HidD_GetPreparsedData(IntPtr hidDeviceObject, out IntPtr preparsedData);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    static extern bool HidD_FreePreparsedData(IntPtr preparsedData);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    static extern int HidP_GetCaps(IntPtr preparsedData, out HIDP_CAPS capabilities);
+
+    [DllImport("hid.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    static extern bool HidD_GetProductString(IntPtr hidDeviceObject, byte[] buffer, uint bufferLength);
+
     [StructLayout(LayoutKind.Sequential)]
     struct SP_DEVICE_INTERFACE_DATA
     {
@@ -55,6 +73,28 @@ class RazerDPI : Form
         public ushort VersionNumber;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct HIDP_CAPS
+    {
+        public ushort Usage;
+        public ushort UsagePage;
+        public ushort InputReportByteLength;
+        public ushort OutputReportByteLength;
+        public ushort FeatureReportByteLength;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 17)]
+        public ushort[] Reserved;
+        public ushort NumberLinkCollectionNodes;
+        public ushort NumberInputButtonCaps;
+        public ushort NumberInputValueCaps;
+        public ushort NumberInputDataIndices;
+        public ushort NumberOutputButtonCaps;
+        public ushort NumberOutputValueCaps;
+        public ushort NumberOutputDataIndices;
+        public ushort NumberFeatureButtonCaps;
+        public ushort NumberFeatureValueCaps;
+        public ushort NumberFeatureDataIndices;
+    }
+
     const uint DIGCF_PRESENT = 0x02;
     const uint DIGCF_DEVICEINTERFACE = 0x10;
     const uint GENERIC_READ = 0x80000000;
@@ -64,32 +104,54 @@ class RazerDPI : Form
     const uint OPEN_EXISTING = 3;
     static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
 
+    // HID Usage constants
+    const ushort HID_USAGE_PAGE_GENERIC = 0x01;
+    const ushort HID_USAGE_GENERIC_MOUSE = 0x02;
+
     Label statusLabel;
     Label resultLabel;
+    RazerDevice selectedDevice;
 
     public RazerDPI()
     {
         Text = "Razer DPI Tool";
-        Size = new Size(320, 300);
+        Size = new Size(320, 320);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
 
+        // Find mouse
+        selectedDevice = FindRazerMouse();
+
         // Status
+        string statusText = selectedDevice != null
+            ? "Found: " + selectedDevice.Name
+            : "No Razer mouse found!";
+
         statusLabel = new Label
         {
-            Text = FindMouse() ? "Mouse connected" : "Mouse not found!",
+            Text = statusText,
             Location = new Point(10, 10),
-            Size = new Size(280, 20),
+            Size = new Size(280, 35),
             TextAlign = ContentAlignment.MiddleCenter
         };
         Controls.Add(statusLabel);
+
+        // Refresh button
+        var refreshBtn = new Button
+        {
+            Text = "Refresh",
+            Location = new Point(230, 50),
+            Size = new Size(60, 23)
+        };
+        refreshBtn.Click += RefreshButton_Click;
+        Controls.Add(refreshBtn);
 
         // Preset buttons
         var presetGroup = new GroupBox
         {
             Text = "Preset DPI",
-            Location = new Point(10, 40),
+            Location = new Point(10, 50),
             Size = new Size(285, 60)
         };
 
@@ -114,7 +176,7 @@ class RazerDPI : Form
         var customGroup = new GroupBox
         {
             Text = "Custom DPI",
-            Location = new Point(10, 110),
+            Location = new Point(10, 120),
             Size = new Size(285, 60)
         };
 
@@ -140,7 +202,7 @@ class RazerDPI : Form
         // Result
         resultLabel = new Label
         {
-            Location = new Point(10, 180),
+            Location = new Point(10, 190),
             Size = new Size(280, 25),
             TextAlign = ContentAlignment.MiddleCenter,
             Font = new Font(Font.FontFamily, 10, FontStyle.Bold)
@@ -151,12 +213,26 @@ class RazerDPI : Form
         var infoLabel = new Label
         {
             Text = "DPI range: 100 - 30000",
-            Location = new Point(10, 210),
+            Location = new Point(10, 220),
             Size = new Size(280, 20),
             TextAlign = ContentAlignment.MiddleCenter,
             ForeColor = Color.Gray
         };
         Controls.Add(infoLabel);
+    }
+
+    void RefreshButton_Click(object sender, EventArgs e)
+    {
+        selectedDevice = FindRazerMouse();
+        if (selectedDevice != null)
+        {
+            statusLabel.Text = "Found: " + selectedDevice.Name;
+            resultLabel.Text = "";
+        }
+        else
+        {
+            statusLabel.Text = "No Razer mouse found!";
+        }
     }
 
     void PresetButton_Click(object sender, EventArgs e)
@@ -185,13 +261,7 @@ class RazerDPI : Form
         }
     }
 
-    bool FindMouse()
-    {
-        string path = FindRazerDevicePath();
-        return path != null;
-    }
-
-    string FindRazerDevicePath()
+    RazerDevice FindRazerMouse()
     {
         Guid hidGuid;
         HidD_GetHidGuid(out hidGuid);
@@ -227,10 +297,40 @@ class RazerDPI : Form
 
                             if (HidD_GetAttributes(handle, ref attrs))
                             {
-                                if (attrs.VendorID == RAZER_VENDOR_ID && Array.IndexOf(DEATHADDER_V3_PIDS, attrs.ProductID) >= 0)
+                                // Check if Razer device
+                                if (attrs.VendorID == RAZER_VENDOR_ID)
                                 {
-                                    CloseHandle(handle);
-                                    return devicePath;
+                                    // Check if mouse via HID Usage
+                                    IntPtr preparsedData;
+                                    if (HidD_GetPreparsedData(handle, out preparsedData))
+                                    {
+                                        HIDP_CAPS caps;
+                                        if (HidP_GetCaps(preparsedData, out caps) == 0x00110000) // HIDP_STATUS_SUCCESS
+                                        {
+                                            // Mouse: UsagePage=1 (Generic Desktop), Usage=2 (Mouse)
+                                            if (caps.UsagePage == HID_USAGE_PAGE_GENERIC && caps.Usage == HID_USAGE_GENERIC_MOUSE)
+                                            {
+                                                // Get product name
+                                                byte[] productBuffer = new byte[256];
+                                                string productName = "Razer Mouse";
+                                                if (HidD_GetProductString(handle, productBuffer, (uint)productBuffer.Length))
+                                                {
+                                                    productName = System.Text.Encoding.Unicode.GetString(productBuffer).TrimEnd('\0');
+                                                }
+
+                                                HidD_FreePreparsedData(preparsedData);
+                                                CloseHandle(handle);
+
+                                                return new RazerDevice
+                                                {
+                                                    Path = devicePath,
+                                                    ProductID = attrs.ProductID,
+                                                    Name = productName + " (0x" + attrs.ProductID.ToString("X4") + ")"
+                                                };
+                                            }
+                                        }
+                                        HidD_FreePreparsedData(preparsedData);
+                                    }
                                 }
                             }
                             CloseHandle(handle);
@@ -251,21 +351,16 @@ class RazerDPI : Form
         return null;
     }
 
-    byte CalculateCRC(byte[] data)
-    {
-        byte crc = 0;
-        for (int i = 2; i < 88; i++)
-            crc ^= data[i];
-        return crc;
-    }
-
-    byte[] BuildDPIReport(int dpi)
+    byte[] BuildDPIReport(int dpi, ushort productId)
     {
         byte[] report = new byte[91]; // 1 byte report ID + 90 bytes data
 
+        // Transaction ID varies by device, 0x1f works for most newer Razer mice
+        byte transactionId = 0x1f;
+
         report[0] = 0x00;  // Report ID
         report[1] = 0x00;  // Status
-        report[2] = 0x1f;  // Transaction ID for DeathAdder V3
+        report[2] = transactionId;
         report[3] = 0x00;  // Remaining packets high
         report[4] = 0x00;  // Remaining packets low
         report[5] = 0x00;  // Protocol type
@@ -282,37 +377,38 @@ class RazerDPI : Form
         report[14] = 0x00;
         report[15] = 0x00;
 
-        // CRC (calculated on bytes 2-88 of the 90-byte payload, which is indices 3-89 in our array)
+        // CRC
         byte crc = 0;
         for (int i = 3; i < 89; i++)
             crc ^= report[i];
         report[89] = crc;
-        report[90] = 0x00;  // Reserved
+        report[90] = 0x00;
 
         return report;
     }
 
     void SetDPI(int dpi)
     {
-        string devicePath = FindRazerDevicePath();
-        if (devicePath == null)
+        if (selectedDevice == null)
         {
-            MessageBox.Show("Razer DeathAdder V3 not found!\nMake sure mouse is connected.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("No Razer mouse found!\nClick Refresh to detect.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             resultLabel.Text = "Failed!";
+            resultLabel.ForeColor = Color.Red;
             return;
         }
 
-        IntPtr handle = CreateFile(devicePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+        IntPtr handle = CreateFile(selectedDevice.Path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
         if (handle == INVALID_HANDLE_VALUE)
         {
             MessageBox.Show("Cannot open device. Try running as Administrator.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             resultLabel.Text = "Failed!";
+            resultLabel.ForeColor = Color.Red;
             return;
         }
 
         try
         {
-            byte[] report = BuildDPIReport(dpi);
+            byte[] report = BuildDPIReport(dpi, selectedDevice.ProductID);
             if (HidD_SetFeature(handle, report, (uint)report.Length))
             {
                 resultLabel.Text = "DPI set to " + dpi.ToString();
