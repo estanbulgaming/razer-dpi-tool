@@ -9,11 +9,128 @@ class RazerDevice
     public string Path;
     public ushort ProductID;
     public string Name;
+    public bool IsKnownMouse;
 }
 
 class RazerDPI : Form
 {
     const ushort RAZER_VENDOR_ID = 0x1532;
+
+    // Known Razer Mouse Product IDs (from OpenRazer)
+    static readonly Dictionary<ushort, string> KNOWN_MICE = new Dictionary<ushort, string>
+    {
+        { 0x0013, "Orochi 2011" },
+        { 0x0015, "Naga" },
+        { 0x0016, "DeathAdder 3.5G" },
+        { 0x001F, "Naga Epic" },
+        { 0x0020, "Abyssus 1800" },
+        { 0x0024, "Mamba 2012 Wired" },
+        { 0x0025, "Mamba 2012 Wireless" },
+        { 0x0029, "DeathAdder 3.5G Black" },
+        { 0x002E, "Naga 2012" },
+        { 0x002F, "Imperator" },
+        { 0x0032, "Ouroboros" },
+        { 0x0034, "Taipan" },
+        { 0x0036, "Naga Hex Red" },
+        { 0x0037, "DeathAdder 2013" },
+        { 0x0038, "DeathAdder 1800" },
+        { 0x0039, "Orochi 2013" },
+        { 0x003E, "Naga Epic Chroma" },
+        { 0x003F, "Naga Epic Chroma Dock" },
+        { 0x0040, "Naga 2014" },
+        { 0x0041, "Naga Hex" },
+        { 0x0042, "Abyssus" },
+        { 0x0043, "DeathAdder Chroma" },
+        { 0x0044, "Mamba Wired" },
+        { 0x0045, "Mamba Wireless" },
+        { 0x0046, "Mamba TE Wired" },
+        { 0x0048, "Orochi Chroma" },
+        { 0x004C, "Diamondback Chroma" },
+        { 0x004F, "DeathAdder 2000" },
+        { 0x0050, "Naga Hex V2" },
+        { 0x0053, "Naga Chroma" },
+        { 0x0054, "DeathAdder 3500" },
+        { 0x0059, "Lancehead Wired" },
+        { 0x005A, "Lancehead Wireless" },
+        { 0x005B, "Abyssus V2" },
+        { 0x005C, "DeathAdder Elite" },
+        { 0x005E, "Abyssus 2000" },
+        { 0x0060, "Lancehead TE Wired" },
+        { 0x0062, "Atheris Receiver" },
+        { 0x0064, "Basilisk" },
+        { 0x0065, "Basilisk Essential" },
+        { 0x0067, "Naga Trinity" },
+        { 0x006A, "Abyssus Elite DVa Edition" },
+        { 0x006B, "Abyssus Essential" },
+        { 0x006C, "Mamba Elite" },
+        { 0x006E, "DeathAdder Essential" },
+        { 0x006F, "Lancehead Wireless Receiver" },
+        { 0x0070, "Lancehead Wireless Wired" },
+        { 0x0071, "DeathAdder Essential White Edition" },
+        { 0x0072, "Mamba Wireless Receiver" },
+        { 0x0073, "Mamba Wireless Wired" },
+        { 0x0077, "Pro Click Receiver" },
+        { 0x0078, "Viper" },
+        { 0x007A, "Viper Ultimate Wired" },
+        { 0x007B, "Viper Ultimate Wireless" },
+        { 0x007C, "DeathAdder V2 Pro Wired" },
+        { 0x007D, "DeathAdder V2 Pro Wireless" },
+        { 0x0080, "Pro Click Wired" },
+        { 0x0083, "Basilisk X HyperSpeed" },
+        { 0x0084, "DeathAdder V2" },
+        { 0x0085, "Basilisk V2" },
+        { 0x0086, "Basilisk Ultimate Wired" },
+        { 0x0088, "Basilisk Ultimate Receiver" },
+        { 0x008A, "Viper Mini" },
+        { 0x008C, "DeathAdder V2 Mini" },
+        { 0x008D, "Naga Left Handed 2020" },
+        { 0x008F, "Naga Pro Wired" },
+        { 0x0090, "Naga Pro Wireless" },
+        { 0x0091, "Viper 8K" },
+        { 0x0094, "Orochi V2 Receiver" },
+        { 0x0095, "Orochi V2 Bluetooth" },
+        { 0x0096, "Naga X" },
+        { 0x0098, "DeathAdder Essential 2021" },
+        { 0x0099, "Basilisk V3" },
+        { 0x009A, "Pro Click Mini Receiver" },
+        { 0x009C, "DeathAdder V2 X HyperSpeed" },
+        { 0x009E, "Viper Mini SE Wired" },
+        { 0x009F, "Viper Mini SE Wireless" },
+        { 0x00A1, "DeathAdder V2 Lite" },
+        { 0x00A3, "Cobra" },
+        { 0x00A5, "Viper V2 Pro Wired" },
+        { 0x00A6, "Viper V2 Pro Wireless" },
+        { 0x00A7, "Naga V2 Pro Wired" },
+        { 0x00A8, "Naga V2 Pro Wireless" },
+        { 0x00AA, "Basilisk V3 Pro Wired" },
+        { 0x00AB, "Basilisk V3 Pro Wireless" },
+        { 0x00AF, "Cobra Pro Wired" },
+        { 0x00B0, "Cobra Pro Wireless" },
+        { 0x00B2, "DeathAdder V3" },
+        { 0x00B3, "HyperPolling Wireless Dongle" },
+        { 0x00B4, "Naga V2 HyperSpeed Receiver" },
+        { 0x00B6, "DeathAdder V3 Pro Wired" },
+        { 0x00B7, "DeathAdder V3 Pro Wireless" },
+        { 0x00B8, "Viper V3 HyperSpeed" },
+        { 0x00B9, "Basilisk V3 X HyperSpeed" },
+        { 0x00BE, "DeathAdder V4 Pro Wired" },
+        { 0x00BF, "DeathAdder V4 Pro Wireless" },
+        { 0x00C0, "Viper V3 Pro Wired" },
+        { 0x00C1, "Viper V3 Pro Wireless" },
+        { 0x00C2, "DeathAdder V3 Pro Wired Alt" },
+        { 0x00C3, "DeathAdder V3 Pro Wireless Alt" },
+        { 0x00C4, "DeathAdder V3 HyperSpeed Wired" },
+        { 0x00C5, "DeathAdder V3 HyperSpeed Wireless" },
+        { 0x00C7, "Pro Click V2 Vertical Edition Wired" },
+        { 0x00C8, "Pro Click V2 Vertical Edition Wireless" },
+        { 0x00CB, "Basilisk V3 35K" },
+        { 0x00CC, "Basilisk V3 Pro 35K Wired" },
+        { 0x00CD, "Basilisk V3 Pro 35K Wireless" },
+        { 0x00D0, "Pro Click V2 Wired" },
+        { 0x00D1, "Pro Click V2 Wireless" },
+        { 0x00D6, "Basilisk V3 Pro 35K Phantom Green Edition Wired" },
+        { 0x00D7, "Basilisk V3 Pro 35K Phantom Green Edition Wireless" },
+    };
 
     // HID API
     [DllImport("hid.dll", SetLastError = true)]
@@ -43,15 +160,6 @@ class RazerDPI : Form
     [DllImport("hid.dll", SetLastError = true)]
     static extern bool HidD_SetFeature(IntPtr hidDeviceObject, byte[] reportBuffer, uint reportBufferLength);
 
-    [DllImport("hid.dll", SetLastError = true)]
-    static extern bool HidD_GetPreparsedData(IntPtr hidDeviceObject, out IntPtr preparsedData);
-
-    [DllImport("hid.dll", SetLastError = true)]
-    static extern bool HidD_FreePreparsedData(IntPtr preparsedData);
-
-    [DllImport("hid.dll", SetLastError = true)]
-    static extern int HidP_GetCaps(IntPtr preparsedData, out HIDP_CAPS capabilities);
-
     [DllImport("hid.dll", SetLastError = true, CharSet = CharSet.Auto)]
     static extern bool HidD_GetProductString(IntPtr hidDeviceObject, byte[] buffer, uint bufferLength);
 
@@ -73,28 +181,6 @@ class RazerDPI : Form
         public ushort VersionNumber;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    struct HIDP_CAPS
-    {
-        public ushort Usage;
-        public ushort UsagePage;
-        public ushort InputReportByteLength;
-        public ushort OutputReportByteLength;
-        public ushort FeatureReportByteLength;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 17)]
-        public ushort[] Reserved;
-        public ushort NumberLinkCollectionNodes;
-        public ushort NumberInputButtonCaps;
-        public ushort NumberInputValueCaps;
-        public ushort NumberInputDataIndices;
-        public ushort NumberOutputButtonCaps;
-        public ushort NumberOutputValueCaps;
-        public ushort NumberOutputDataIndices;
-        public ushort NumberFeatureButtonCaps;
-        public ushort NumberFeatureValueCaps;
-        public ushort NumberFeatureDataIndices;
-    }
-
     const uint DIGCF_PRESENT = 0x02;
     const uint DIGCF_DEVICEINTERFACE = 0x10;
     const uint GENERIC_READ = 0x80000000;
@@ -104,45 +190,46 @@ class RazerDPI : Form
     const uint OPEN_EXISTING = 3;
     static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
 
-    // HID Usage constants
-    const ushort HID_USAGE_PAGE_GENERIC = 0x01;
-    const ushort HID_USAGE_GENERIC_MOUSE = 0x02;
-
     Label statusLabel;
     Label resultLabel;
+    ComboBox deviceCombo;
+    List<RazerDevice> foundDevices;
     RazerDevice selectedDevice;
 
     public RazerDPI()
     {
         Text = "Razer DPI Tool";
-        Size = new Size(320, 320);
+        Size = new Size(340, 360);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
 
-        // Find mouse
-        selectedDevice = FindRazerMouse();
-
         // Status
-        string statusText = selectedDevice != null
-            ? "Found: " + selectedDevice.Name
-            : "No Razer mouse found!";
-
         statusLabel = new Label
         {
-            Text = statusText,
+            Text = "Searching for Razer devices...",
             Location = new Point(10, 10),
-            Size = new Size(280, 35),
+            Size = new Size(300, 20),
             TextAlign = ContentAlignment.MiddleCenter
         };
         Controls.Add(statusLabel);
+
+        // Device dropdown
+        deviceCombo = new ComboBox
+        {
+            Location = new Point(10, 35),
+            Size = new Size(230, 24),
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
+        deviceCombo.SelectedIndexChanged += DeviceCombo_Changed;
+        Controls.Add(deviceCombo);
 
         // Refresh button
         var refreshBtn = new Button
         {
             Text = "Refresh",
-            Location = new Point(230, 50),
-            Size = new Size(60, 23)
+            Location = new Point(250, 34),
+            Size = new Size(65, 24)
         };
         refreshBtn.Click += RefreshButton_Click;
         Controls.Add(refreshBtn);
@@ -151,8 +238,8 @@ class RazerDPI : Form
         var presetGroup = new GroupBox
         {
             Text = "Preset DPI",
-            Location = new Point(10, 50),
-            Size = new Size(285, 60)
+            Location = new Point(10, 70),
+            Size = new Size(305, 60)
         };
 
         int[] presets = { 400, 600, 800, 1600, 3200 };
@@ -162,13 +249,13 @@ class RazerDPI : Form
             var btn = new Button
             {
                 Text = dpi.ToString(),
-                Location = new Point(btnX, 20),
-                Size = new Size(50, 28),
+                Location = new Point(btnX, 22),
+                Size = new Size(54, 28),
                 Tag = dpi
             };
             btn.Click += PresetButton_Click;
             presetGroup.Controls.Add(btn);
-            btnX += 54;
+            btnX += 58;
         }
         Controls.Add(presetGroup);
 
@@ -176,8 +263,8 @@ class RazerDPI : Form
         var customGroup = new GroupBox
         {
             Text = "Custom DPI",
-            Location = new Point(10, 120),
-            Size = new Size(285, 60)
+            Location = new Point(10, 140),
+            Size = new Size(305, 60)
         };
 
         var customInput = new TextBox
@@ -202,8 +289,8 @@ class RazerDPI : Form
         // Result
         resultLabel = new Label
         {
-            Location = new Point(10, 190),
-            Size = new Size(280, 25),
+            Location = new Point(10, 210),
+            Size = new Size(305, 25),
             TextAlign = ContentAlignment.MiddleCenter,
             Font = new Font(Font.FontFamily, 10, FontStyle.Bold)
         };
@@ -212,27 +299,60 @@ class RazerDPI : Form
         // Info
         var infoLabel = new Label
         {
-            Text = "DPI range: 100 - 30000",
-            Location = new Point(10, 220),
-            Size = new Size(280, 20),
+            Text = "DPI range: 100 - 30000\nGreen = Known mouse, Yellow = Unknown Razer device",
+            Location = new Point(10, 245),
+            Size = new Size(305, 40),
             TextAlign = ContentAlignment.MiddleCenter,
             ForeColor = Color.Gray
         };
         Controls.Add(infoLabel);
+
+        // Initial scan
+        RefreshDevices();
+    }
+
+    void DeviceCombo_Changed(object sender, EventArgs e)
+    {
+        if (deviceCombo.SelectedIndex >= 0 && deviceCombo.SelectedIndex < foundDevices.Count)
+        {
+            selectedDevice = foundDevices[deviceCombo.SelectedIndex];
+            resultLabel.Text = "";
+        }
     }
 
     void RefreshButton_Click(object sender, EventArgs e)
     {
-        selectedDevice = FindRazerMouse();
-        if (selectedDevice != null)
+        RefreshDevices();
+    }
+
+    void RefreshDevices()
+    {
+        foundDevices = FindAllRazerDevices();
+        deviceCombo.Items.Clear();
+        selectedDevice = null;
+
+        if (foundDevices.Count == 0)
         {
-            statusLabel.Text = "Found: " + selectedDevice.Name;
-            resultLabel.Text = "";
+            statusLabel.Text = "No Razer devices found!";
+            return;
         }
-        else
+
+        // Prioritize known mice
+        foundDevices.Sort((a, b) => b.IsKnownMouse.CompareTo(a.IsKnownMouse));
+
+        foreach (var device in foundDevices)
         {
-            statusLabel.Text = "No Razer mouse found!";
+            string prefix = device.IsKnownMouse ? "[Mouse] " : "[?] ";
+            deviceCombo.Items.Add(prefix + device.Name);
         }
+
+        deviceCombo.SelectedIndex = 0;
+        selectedDevice = foundDevices[0];
+
+        int knownCount = 0;
+        foreach (var d in foundDevices) if (d.IsKnownMouse) knownCount++;
+
+        statusLabel.Text = "Found " + foundDevices.Count.ToString() + " device(s), " + knownCount.ToString() + " known mouse(s)";
     }
 
     void PresetButton_Click(object sender, EventArgs e)
@@ -261,13 +381,16 @@ class RazerDPI : Form
         }
     }
 
-    RazerDevice FindRazerMouse()
+    List<RazerDevice> FindAllRazerDevices()
     {
+        List<RazerDevice> devices = new List<RazerDevice>();
+        Dictionary<ushort, bool> seenProductIds = new Dictionary<ushort, bool>();
+
         Guid hidGuid;
         HidD_GetHidGuid(out hidGuid);
 
         IntPtr deviceInfoSet = SetupDiGetClassDevs(ref hidGuid, IntPtr.Zero, IntPtr.Zero, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
-        if (deviceInfoSet == INVALID_HANDLE_VALUE) return null;
+        if (deviceInfoSet == INVALID_HANDLE_VALUE) return devices;
 
         try
         {
@@ -297,40 +420,34 @@ class RazerDPI : Form
 
                             if (HidD_GetAttributes(handle, ref attrs))
                             {
-                                // Check if Razer device
-                                if (attrs.VendorID == RAZER_VENDOR_ID)
+                                if (attrs.VendorID == RAZER_VENDOR_ID && !seenProductIds.ContainsKey(attrs.ProductID))
                                 {
-                                    // Check if mouse via HID Usage
-                                    IntPtr preparsedData;
-                                    if (HidD_GetPreparsedData(handle, out preparsedData))
+                                    seenProductIds[attrs.ProductID] = true;
+
+                                    string productName;
+                                    bool isKnown = KNOWN_MICE.TryGetValue(attrs.ProductID, out productName);
+
+                                    if (!isKnown)
                                     {
-                                        HIDP_CAPS caps;
-                                        if (HidP_GetCaps(preparsedData, out caps) == 0x00110000) // HIDP_STATUS_SUCCESS
+                                        // Try to get name from device
+                                        byte[] productBuffer = new byte[256];
+                                        if (HidD_GetProductString(handle, productBuffer, (uint)productBuffer.Length))
                                         {
-                                            // Mouse: UsagePage=1 (Generic Desktop), Usage=2 (Mouse)
-                                            if (caps.UsagePage == HID_USAGE_PAGE_GENERIC && caps.Usage == HID_USAGE_GENERIC_MOUSE)
-                                            {
-                                                // Get product name
-                                                byte[] productBuffer = new byte[256];
-                                                string productName = "Razer Mouse";
-                                                if (HidD_GetProductString(handle, productBuffer, (uint)productBuffer.Length))
-                                                {
-                                                    productName = System.Text.Encoding.Unicode.GetString(productBuffer).TrimEnd('\0');
-                                                }
-
-                                                HidD_FreePreparsedData(preparsedData);
-                                                CloseHandle(handle);
-
-                                                return new RazerDevice
-                                                {
-                                                    Path = devicePath,
-                                                    ProductID = attrs.ProductID,
-                                                    Name = productName + " (0x" + attrs.ProductID.ToString("X4") + ")"
-                                                };
-                                            }
+                                            productName = System.Text.Encoding.Unicode.GetString(productBuffer).TrimEnd('\0');
                                         }
-                                        HidD_FreePreparsedData(preparsedData);
+                                        else
+                                        {
+                                            productName = "Unknown Device";
+                                        }
                                     }
+
+                                    devices.Add(new RazerDevice
+                                    {
+                                        Path = devicePath,
+                                        ProductID = attrs.ProductID,
+                                        Name = productName + " (0x" + attrs.ProductID.ToString("X4") + ")",
+                                        IsKnownMouse = isKnown
+                                    });
                                 }
                             }
                             CloseHandle(handle);
@@ -348,36 +465,33 @@ class RazerDPI : Form
         {
             SetupDiDestroyDeviceInfoList(deviceInfoSet);
         }
-        return null;
+        return devices;
     }
 
-    byte[] BuildDPIReport(int dpi, ushort productId)
+    byte[] BuildDPIReport(int dpi)
     {
-        byte[] report = new byte[91]; // 1 byte report ID + 90 bytes data
+        byte[] report = new byte[91];
 
-        // Transaction ID varies by device, 0x1f works for most newer Razer mice
         byte transactionId = 0x1f;
 
-        report[0] = 0x00;  // Report ID
-        report[1] = 0x00;  // Status
+        report[0] = 0x00;
+        report[1] = 0x00;
         report[2] = transactionId;
-        report[3] = 0x00;  // Remaining packets high
-        report[4] = 0x00;  // Remaining packets low
-        report[5] = 0x00;  // Protocol type
-        report[6] = 0x07;  // Data size
-        report[7] = 0x04;  // Command class (misc)
-        report[8] = 0x05;  // Command ID (set DPI)
+        report[3] = 0x00;
+        report[4] = 0x00;
+        report[5] = 0x00;
+        report[6] = 0x07;
+        report[7] = 0x04;
+        report[8] = 0x05;
 
-        // Arguments
-        report[9] = 0x00;  // Variable storage (NOSTORE)
-        report[10] = (byte)((dpi >> 8) & 0xFF);  // DPI X high
-        report[11] = (byte)(dpi & 0xFF);         // DPI X low
-        report[12] = (byte)((dpi >> 8) & 0xFF);  // DPI Y high
-        report[13] = (byte)(dpi & 0xFF);         // DPI Y low
+        report[9] = 0x00;
+        report[10] = (byte)((dpi >> 8) & 0xFF);
+        report[11] = (byte)(dpi & 0xFF);
+        report[12] = (byte)((dpi >> 8) & 0xFF);
+        report[13] = (byte)(dpi & 0xFF);
         report[14] = 0x00;
         report[15] = 0x00;
 
-        // CRC
         byte crc = 0;
         for (int i = 3; i < 89; i++)
             crc ^= report[i];
@@ -391,7 +505,7 @@ class RazerDPI : Form
     {
         if (selectedDevice == null)
         {
-            MessageBox.Show("No Razer mouse found!\nClick Refresh to detect.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("No device selected!\nClick Refresh to scan.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             resultLabel.Text = "Failed!";
             resultLabel.ForeColor = Color.Red;
             return;
@@ -408,7 +522,7 @@ class RazerDPI : Form
 
         try
         {
-            byte[] report = BuildDPIReport(dpi, selectedDevice.ProductID);
+            byte[] report = BuildDPIReport(dpi);
             if (HidD_SetFeature(handle, report, (uint)report.Length))
             {
                 resultLabel.Text = "DPI set to " + dpi.ToString();
@@ -417,7 +531,7 @@ class RazerDPI : Form
             else
             {
                 int error = Marshal.GetLastWin32Error();
-                MessageBox.Show("Failed to set DPI. Error code: " + error.ToString(), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Failed to set DPI. Error code: " + error.ToString() + "\nTry selecting a different device.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 resultLabel.Text = "Failed!";
                 resultLabel.ForeColor = Color.Red;
             }
