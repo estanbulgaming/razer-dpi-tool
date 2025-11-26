@@ -384,7 +384,7 @@ class RazerDPI : Form
     List<RazerDevice> FindAllRazerDevices()
     {
         List<RazerDevice> devices = new List<RazerDevice>();
-        Dictionary<ushort, bool> seenProductIds = new Dictionary<ushort, bool>();
+        Dictionary<string, int> productIdCount = new Dictionary<string, int>();
 
         Guid hidGuid;
         HidD_GetHidGuid(out hidGuid);
@@ -420,16 +420,13 @@ class RazerDPI : Form
 
                             if (HidD_GetAttributes(handle, ref attrs))
                             {
-                                if (attrs.VendorID == RAZER_VENDOR_ID && !seenProductIds.ContainsKey(attrs.ProductID))
+                                if (attrs.VendorID == RAZER_VENDOR_ID)
                                 {
-                                    seenProductIds[attrs.ProductID] = true;
-
                                     string productName;
                                     bool isKnown = KNOWN_MICE.TryGetValue(attrs.ProductID, out productName);
 
                                     if (!isKnown)
                                     {
-                                        // Try to get name from device
                                         byte[] productBuffer = new byte[256];
                                         if (HidD_GetProductString(handle, productBuffer, (uint)productBuffer.Length))
                                         {
@@ -441,11 +438,24 @@ class RazerDPI : Form
                                         }
                                     }
 
+                                    // Track interface number for this product
+                                    string pidKey = attrs.ProductID.ToString("X4");
+                                    int ifaceNum = 0;
+                                    if (productIdCount.ContainsKey(pidKey))
+                                    {
+                                        ifaceNum = productIdCount[pidKey];
+                                        productIdCount[pidKey] = ifaceNum + 1;
+                                    }
+                                    else
+                                    {
+                                        productIdCount[pidKey] = 1;
+                                    }
+
                                     devices.Add(new RazerDevice
                                     {
                                         Path = devicePath,
                                         ProductID = attrs.ProductID,
-                                        Name = productName + " (0x" + attrs.ProductID.ToString("X4") + ")",
+                                        Name = productName + " (0x" + pidKey + " #" + ifaceNum.ToString() + ")",
                                         IsKnownMouse = isKnown
                                     });
                                 }
