@@ -1,17 +1,19 @@
 """
-Razer DPI Tool
-Simple tool to change DPI without Razer Synapse
+DPI Tool - Razer & Logitech
+Simple tool to change DPI without vendor software
 """
 
 import hid
 import tkinter as tk
 from tkinter import ttk, messagebox
+import struct
 
-# Razer USB Vendor ID
+# Vendor IDs
 RAZER_VENDOR_ID = 0x1532
+LOGITECH_VENDOR_ID = 0x046D
 
 # Known Razer Mouse Product IDs (from OpenRazer)
-KNOWN_MICE = {
+KNOWN_RAZER_MICE = {
     0x0013: "Orochi 2011",
     0x0016: "DeathAdder 3.5G",
     0x0020: "DeathAdder 1800",
@@ -105,8 +107,70 @@ KNOWN_MICE = {
     0x00CE: "Viper V3 Pro (Wireless)",
 }
 
+# Known Logitech Gaming Mice (HID++ 2.0 compatible)
+KNOWN_LOGITECH_MICE = {
+    0xC24A: "G600",
+    0xC246: "G700",
+    0xC531: "G700s (Receiver)",
+    0xC07C: "G700s (Wired)",
+    0xC332: "G502 Hero",
+    0xC08B: "G502 Hero (Wired)",
+    0xC33C: "G502 Lightspeed (Receiver)",
+    0xC08D: "G502 Lightspeed (Wired)",
+    0xC539: "G502 X (Receiver)",
+    0xC098: "G502 X (Wired)",
+    0xC53A: "G502 X Plus (Receiver)",
+    0xC099: "G502 X Plus (Wired)",
+    0xC07D: "G402",
+    0xC046: "G403 Hero (Wired)",
+    0xC082: "G403 Hero",
+    0xC083: "G403 Lightspeed",
+    0xC08F: "G403 (Wired)",
+    0xC084: "G203",
+    0xC092: "G203 Lightsync",
+    0xC334: "G Pro (Receiver)",
+    0xC088: "G Pro (Wired)",
+    0xC539: "G Pro X Superlight (Receiver)",
+    0xC094: "G Pro X Superlight (Wired)",
+    0xC53D: "G Pro X Superlight 2 (Receiver)",
+    0xC09B: "G Pro X Superlight 2 (Wired)",
+    0xC335: "G Pro Wireless (Receiver)",
+    0xC08A: "G Pro Wireless (Wired)",
+    0xC07E: "G102",
+    0xC08E: "G102 Lightsync",
+    0xC087: "G703 Hero (Wired)",
+    0xC336: "G703 Hero (Receiver)",
+    0xC337: "G903 Hero (Receiver)",
+    0xC086: "G903 Hero (Wired)",
+    0xC091: "G304/G305 (Receiver)",
+    0xC085: "G304/G305 (Wired)",
+    0xC547: "G309 (Receiver)",
+    0xC093: "G309 (Wired)",
+    0xC095: "G604 (Receiver)",
+    0xC096: "MX Master 3",
+    0xC548: "MX Master 3S (Receiver)",
+    0xB034: "MX Master 3S (Bluetooth)",
+    0xC52B: "Unifying Receiver",
+    0xC534: "Nano Receiver",
+    0xC545: "Lightspeed Receiver",
+}
 
-def calculate_crc(data: bytes) -> int:
+# HID++ Constants
+HIDPP_SHORT_MESSAGE = 0x10
+HIDPP_LONG_MESSAGE = 0x11
+HIDPP_DEVICE_RECEIVER = 0xFF
+HIDPP_FEATURE_ROOT = 0x0000
+HIDPP_FEATURE_ADJUSTABLE_DPI = 0x2201
+
+# HID++ Function IDs
+HIDPP_ROOT_GET_FEATURE = 0x00
+HIDPP_DPI_GET_SENSOR_COUNT = 0x00
+HIDPP_DPI_GET_SENSOR_DPI_LIST = 0x10
+HIDPP_DPI_GET_SENSOR_DPI = 0x20
+HIDPP_DPI_SET_SENSOR_DPI = 0x30
+
+
+def calculate_razer_crc(data: bytes) -> int:
     """Calculate XOR checksum for Razer report (bytes 2-87)"""
     crc = 0
     for i in range(2, 88):
@@ -114,7 +178,7 @@ def calculate_crc(data: bytes) -> int:
     return crc
 
 
-def build_dpi_report(dpi_x: int, dpi_y: int, transaction_id: int = 0x1f) -> bytes:
+def build_razer_dpi_report(dpi_x: int, dpi_y: int, transaction_id: int = 0x1f) -> bytes:
     """Build a 90-byte Razer report to set DPI"""
     report = bytearray(90)
     report[0] = 0x00  # Status
@@ -132,9 +196,93 @@ def build_dpi_report(dpi_x: int, dpi_y: int, transaction_id: int = 0x1f) -> byte
     report[12] = dpi_y & 0xFF
     report[13] = 0x00
     report[14] = 0x00
-    report[88] = calculate_crc(report)
+    report[88] = calculate_razer_crc(report)
     report[89] = 0x00
     return bytes(report)
+
+
+class LogitechHIDPP:
+    """HID++ 2.0 protocol handler for Logitech mice"""
+
+    def __init__(self, device_path):
+        self.device = hid.device()
+        self.device.open_path(device_path)
+        self.device.set_nonblocking(False)
+        self.dpi_feature_index = None
+
+    def close(self):
+        self.device.close()
+
+    def send_short(self, device_idx, feature_idx, func_id, params=None):
+        """Send a short HID++ message (7 bytes)"""
+        if params is None:
+            params = []
+        msg = [HIDPP_SHORT_MESSAGE, device_idx, feature_idx, (func_id << 4) | 0x00]
+        msg.extend(params[:3])
+        while len(msg) < 7:
+            msg.append(0x00)
+        self.device.write(msg)
+        return self._read_response()
+
+    def send_long(self, device_idx, feature_idx, func_id, params=None):
+        """Send a long HID++ message (20 bytes)"""
+        if params is None:
+            params = []
+        msg = [HIDPP_LONG_MESSAGE, device_idx, feature_idx, (func_id << 4) | 0x00]
+        msg.extend(params[:16])
+        while len(msg) < 20:
+            msg.append(0x00)
+        self.device.write(msg)
+        return self._read_response()
+
+    def _read_response(self, timeout_ms=1000):
+        """Read HID++ response"""
+        data = self.device.read(64, timeout_ms)
+        if not data:
+            raise Exception("No response from device")
+        # Check for error response (0x8F)
+        if len(data) >= 4 and data[2] == 0x8F:
+            error_code = data[4] if len(data) > 4 else 0
+            raise Exception(f"HID++ error: 0x{error_code:02X}")
+        return data
+
+    def get_feature_index(self, feature_id):
+        """Get the index of a feature from the root feature table"""
+        params = [(feature_id >> 8) & 0xFF, feature_id & 0xFF]
+        response = self.send_short(HIDPP_DEVICE_RECEIVER, 0x00, HIDPP_ROOT_GET_FEATURE, params)
+        if len(response) >= 5:
+            return response[4]
+        return None
+
+    def init_dpi_feature(self):
+        """Initialize DPI feature index"""
+        self.dpi_feature_index = self.get_feature_index(HIDPP_FEATURE_ADJUSTABLE_DPI)
+        if self.dpi_feature_index is None or self.dpi_feature_index == 0:
+            raise Exception("Device does not support DPI adjustment")
+        return self.dpi_feature_index
+
+    def set_dpi(self, dpi, sensor_idx=0):
+        """Set DPI on the device"""
+        if self.dpi_feature_index is None:
+            self.init_dpi_feature()
+
+        # DPI is big-endian 16-bit
+        params = [sensor_idx, (dpi >> 8) & 0xFF, dpi & 0xFF]
+        self.send_short(HIDPP_DEVICE_RECEIVER, self.dpi_feature_index,
+                       HIDPP_DPI_SET_SENSOR_DPI >> 4, params)
+        return True
+
+    def get_dpi(self, sensor_idx=0):
+        """Get current DPI from the device"""
+        if self.dpi_feature_index is None:
+            self.init_dpi_feature()
+
+        params = [sensor_idx]
+        response = self.send_short(HIDPP_DEVICE_RECEIVER, self.dpi_feature_index,
+                                  HIDPP_DPI_GET_SENSOR_DPI >> 4, params)
+        if len(response) >= 6:
+            return (response[4] << 8) | response[5]
+        return None
 
 
 def find_razer_mouse():
@@ -146,71 +294,167 @@ def find_razer_mouse():
 
         # Interface 0 with mouse usage (0x0002) is the control interface
         if iface == 0 and usage == 0x0002:
-            name = KNOWN_MICE.get(pid, f"Razer Mouse (0x{pid:04X})")
-            return device, name
+            name = KNOWN_RAZER_MICE.get(pid, f"Razer Mouse (0x{pid:04X})")
+            return device, name, "razer"
 
     # Fallback: any interface 0
     for device in hid.enumerate(RAZER_VENDOR_ID):
         pid = device['product_id']
         if device.get('interface_number', -1) == 0:
-            name = KNOWN_MICE.get(pid, f"Razer Mouse (0x{pid:04X})")
-            return device, name
+            name = KNOWN_RAZER_MICE.get(pid, f"Razer Mouse (0x{pid:04X})")
+            return device, name, "razer"
 
-    return None, None
+    return None, None, None
 
 
-def set_dpi(dpi: int) -> bool:
-    """Set DPI on connected Razer mouse"""
-    device_info, name = find_razer_mouse()
+def find_logitech_mouse():
+    """Find connected Logitech mouse with HID++ support"""
+    for device in hid.enumerate(LOGITECH_VENDOR_ID):
+        pid = device['product_id']
+        usage_page = device.get('usage_page', 0)
 
-    if not device_info:
-        raise Exception("Razer mouse not found!\nMake sure mouse is connected.")
+        # HID++ uses vendor-specific usage page (0xFF00) or sometimes 0x0001
+        # Also check for known gaming mice
+        if pid in KNOWN_LOGITECH_MICE:
+            # Prefer the interface with usage_page 0xFF00 (vendor specific) for HID++
+            if usage_page == 0xFF00 or usage_page == 0x0001:
+                name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
+                return device, name, "logitech"
 
+    # Fallback: try any Logitech device with vendor usage page
+    for device in hid.enumerate(LOGITECH_VENDOR_ID):
+        pid = device['product_id']
+        usage_page = device.get('usage_page', 0)
+        if usage_page == 0xFF00:
+            name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Device (0x{pid:04X})")
+            return device, name, "logitech"
+
+    return None, None, None
+
+
+def find_any_mouse():
+    """Find any supported mouse (Razer or Logitech)"""
+    # Try Razer first
+    device, name, brand = find_razer_mouse()
+    if device:
+        return device, name, brand
+
+    # Try Logitech
+    device, name, brand = find_logitech_mouse()
+    if device:
+        return device, name, brand
+
+    return None, None, None
+
+
+def find_all_mice():
+    """Find all supported mice"""
+    mice = []
+
+    # Find Razer mice
+    for device in hid.enumerate(RAZER_VENDOR_ID):
+        pid = device['product_id']
+        iface = device.get('interface_number', -1)
+        usage = device.get('usage', 0)
+
+        if iface == 0 and usage == 0x0002:
+            name = KNOWN_RAZER_MICE.get(pid, f"Razer Mouse (0x{pid:04X})")
+            mice.append((device, name, "razer"))
+            break  # Only add one Razer device
+
+    if not any(m[2] == "razer" for m in mice):
+        for device in hid.enumerate(RAZER_VENDOR_ID):
+            pid = device['product_id']
+            if device.get('interface_number', -1) == 0:
+                name = KNOWN_RAZER_MICE.get(pid, f"Razer Mouse (0x{pid:04X})")
+                mice.append((device, name, "razer"))
+                break
+
+    # Find Logitech mice
+    found_logitech = set()
+    for device in hid.enumerate(LOGITECH_VENDOR_ID):
+        pid = device['product_id']
+        usage_page = device.get('usage_page', 0)
+
+        if pid in KNOWN_LOGITECH_MICE and pid not in found_logitech:
+            if usage_page == 0xFF00 or usage_page == 0x0001:
+                name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
+                mice.append((device, name, "logitech"))
+                found_logitech.add(pid)
+
+    return mice
+
+
+def set_razer_dpi(device_info, dpi: int) -> bool:
+    """Set DPI on Razer mouse"""
     try:
         device = hid.device()
         device.open_path(device_info['path'])
-        report = build_dpi_report(dpi, dpi)
-        # Prepend report ID 0x00
+        report = build_razer_dpi_report(dpi, dpi)
         result = device.send_feature_report(b'\x00' + report)
         device.close()
 
         if result < 0:
             raise Exception("send_feature_report failed")
         return True
-
     except Exception as e:
         raise Exception(f"Failed to set DPI: {e}")
+
+
+def set_logitech_dpi(device_info, dpi: int) -> bool:
+    """Set DPI on Logitech mouse using HID++"""
+    try:
+        hidpp = LogitechHIDPP(device_info['path'])
+        hidpp.set_dpi(dpi)
+        hidpp.close()
+        return True
+    except Exception as e:
+        raise Exception(f"Failed to set DPI: {e}")
+
+
+def set_dpi(device_info, brand: str, dpi: int) -> bool:
+    """Set DPI on any supported mouse"""
+    if brand == "razer":
+        return set_razer_dpi(device_info, dpi)
+    elif brand == "logitech":
+        return set_logitech_dpi(device_info, dpi)
+    else:
+        raise Exception(f"Unknown brand: {brand}")
 
 
 class DPIApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Razer DPI Tool")
-        self.root.geometry("320x300")
+        self.root.title("DPI Tool")
+        self.root.geometry("350x340")
         self.root.resizable(False, False)
 
-        # Check mouse on startup
-        device_info, name = find_razer_mouse()
+        self.current_device = None
+        self.current_brand = None
+        self.mice_list = []
+
+        # Device selection
+        device_frame = ttk.LabelFrame(self.root, text="Device", padding=10)
+        device_frame.pack(fill='x', padx=20, pady=10)
+
+        self.device_combo = ttk.Combobox(device_frame, state='readonly', width=35)
+        self.device_combo.pack(side='left', padx=5)
+        self.device_combo.bind('<<ComboboxSelected>>', self.on_device_select)
+
+        refresh_btn = ttk.Button(device_frame, text="Refresh", command=self.refresh)
+        refresh_btn.pack(side='left', padx=5)
 
         # Status label
         self.status_var = tk.StringVar()
-        if name:
-            self.status_var.set(f"Connected: {name}")
-        else:
-            self.status_var.set("Mouse not found! Click Refresh")
-
+        self.status_var.set("Click Refresh to scan for mice")
         status_label = ttk.Label(self.root, textvariable=self.status_var)
-        status_label.pack(pady=10)
-
-        # Refresh button
-        refresh_btn = ttk.Button(self.root, text="Refresh", command=self.refresh)
-        refresh_btn.pack(pady=5)
+        status_label.pack(pady=5)
 
         # Preset buttons frame
         preset_frame = ttk.LabelFrame(self.root, text="Preset DPI", padding=10)
         preset_frame.pack(fill='x', padx=20, pady=5)
 
-        presets = [400, 600, 800, 1600, 3200]
+        presets = [400, 800, 1200, 1600, 3200]
         for dpi in presets:
             btn = ttk.Button(
                 preset_frame,
@@ -243,23 +487,45 @@ class DPIApp:
         # Info
         info_label = ttk.Label(
             self.root,
-            text="DPI range: 100 - 30000",
+            text="Supports Razer and Logitech gaming mice",
             foreground="gray"
         )
         info_label.pack(pady=5)
 
+        # Auto-refresh on start
+        self.root.after(100, self.refresh)
+
     def refresh(self):
-        device_info, name = find_razer_mouse()
-        if name:
-            self.status_var.set(f"Connected: {name}")
-            self.result_var.set("")
+        self.mice_list = find_all_mice()
+        self.device_combo['values'] = []
+
+        if self.mice_list:
+            names = [f"[{m[2].upper()}] {m[1]}" for m in self.mice_list]
+            self.device_combo['values'] = names
+            self.device_combo.current(0)
+            self.on_device_select(None)
         else:
-            self.status_var.set("Mouse not found!")
+            self.current_device = None
+            self.current_brand = None
+            self.status_var.set("No mice found!")
+            self.result_var.set("")
+
+    def on_device_select(self, event):
+        idx = self.device_combo.current()
+        if idx >= 0 and idx < len(self.mice_list):
+            self.current_device = self.mice_list[idx][0]
+            self.current_brand = self.mice_list[idx][2]
+            name = self.mice_list[idx][1]
+            self.status_var.set(f"Selected: {name}")
             self.result_var.set("")
 
     def apply_dpi(self, dpi: int):
+        if not self.current_device:
+            messagebox.showerror("Error", "No device selected!\nClick Refresh to scan.")
+            return
+
         try:
-            set_dpi(dpi)
+            set_dpi(self.current_device, self.current_brand, dpi)
             self.result_var.set(f"DPI set to {dpi}")
         except Exception as e:
             messagebox.showerror("Error", str(e))
@@ -268,8 +534,8 @@ class DPIApp:
     def apply_custom_dpi(self):
         try:
             dpi = int(self.custom_entry.get())
-            if dpi < 100 or dpi > 30000:
-                messagebox.showwarning("Warning", "DPI must be between 100 and 30000")
+            if dpi < 100 or dpi > 25600:
+                messagebox.showwarning("Warning", "DPI must be between 100 and 25600")
                 return
             self.apply_dpi(dpi)
         except ValueError:
