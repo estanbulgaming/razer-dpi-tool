@@ -238,97 +238,116 @@ def build_razer_dpi_report(dpi_x: int, dpi_y: int, transaction_id: int = 0x1f) -
 class LogitechHIDPP:
     """HID++ 2.0 protocol handler for Logitech mice"""
 
+    # Software ID to identify our requests (4 bits, 1-15)
+    SOFTWARE_ID = 0x07
+
     def __init__(self, device_path):
         self.device = hid.device()
         self.device.open_path(device_path)
-        self.device.set_nonblocking(True)
+        self.device.set_nonblocking(False)  # Blocking mode for reliable reads
         self.dpi_feature_index = None
-        self.device_index = None  # Will be detected
+        # For wired devices, use 0xFF (direct device access)
+        self.device_index = 0xFF
 
     def close(self):
         self.device.close()
 
-    def _try_send_short(self, device_idx, feature_idx, func_id, params=None):
-        """Try to send a short HID++ message, return response or None"""
+    def send_short(self, feature_idx, func_id, params=None):
+        """Send a short HID++ 2.0 message (7 bytes)"""
         if params is None:
             params = []
-        msg = [HIDPP_SHORT_MESSAGE, device_idx, feature_idx, (func_id << 4) | 0x00]
-        msg.extend(params[:3])
-        while len(msg) < 7:
-            msg.append(0x00)
-        self.device.write(msg)
-        return self._read_response(timeout_ms=500)
 
-    def send_short(self, device_idx, feature_idx, func_id, params=None):
-        """Send a short HID++ message (7 bytes)"""
-        if params is None:
-            params = []
-        msg = [HIDPP_SHORT_MESSAGE, device_idx, feature_idx, (func_id << 4) | 0x00]
+        # Format: [report_id, device_idx, feature_idx, func_id|sw_id, params...]
+        msg = [
+            HIDPP_SHORT_MESSAGE,       # 0x10
+            self.device_index,          # 0xFF for wired
+            feature_idx,
+            (func_id << 4) | self.SOFTWARE_ID
+        ]
         msg.extend(params[:3])
         while len(msg) < 7:
             msg.append(0x00)
+
         self.device.write(msg)
         return self._read_response()
 
-    def send_long(self, device_idx, feature_idx, func_id, params=None):
-        """Send a long HID++ message (20 bytes)"""
+    def send_long(self, feature_idx, func_id, params=None):
+        """Send a long HID++ 2.0 message (20 bytes)"""
         if params is None:
             params = []
-        msg = [HIDPP_LONG_MESSAGE, device_idx, feature_idx, (func_id << 4) | 0x00]
+
+        msg = [
+            HIDPP_LONG_MESSAGE,        # 0x11
+            self.device_index,
+            feature_idx,
+            (func_id << 4) | self.SOFTWARE_ID
+        ]
         msg.extend(params[:16])
         while len(msg) < 20:
             msg.append(0x00)
+
         self.device.write(msg)
         return self._read_response()
 
-    def _read_response(self, timeout_ms=2000):
-        """Read HID++ response with retry"""
+    def _read_response(self, timeout_ms=3000):
+        """Read HID++ response"""
         import time
         start = time.time()
-        while (time.time() - start) * 1000 < timeout_ms:
-            data = self.device.read(64)
-            if data:
-                # Skip mouse movement/button reports (report ID < 0x10)
-                if data[0] >= 0x10:
-                    # Check for error response (0x8F in sub_id position)
-                    if len(data) >= 4 and data[2] == 0x8F:
-                        error_code = data[4] if len(data) > 4 else 0
-                        raise Exception(f"HID++ error: 0x{error_code:02X}")
-                    return data
-            time.sleep(0.01)
-        return None  # Return None instead of raising for _try methods
 
-    def detect_device_index(self):
-        """Try different device indices to find one that responds"""
-        # Common indices: 0xFF (wired direct), 0x01 (first paired), 0x00
-        for idx in [0xFF, 0x01, 0x00]:
-            try:
-                # Try to get IRoot feature (0x0000)
-                params = [0x00, 0x01]  # IFeatureSet feature ID
-                response = self._try_send_short(idx, 0x00, 0x00, params)
-                if response and len(response) >= 5 and response[4] != 0:
-                    self.device_index = idx
-                    return idx
-            except:
+        while (time.time() - start) * 1000 < timeout_ms:
+            # Read with timeout
+            data = self.device.read(64, timeout_ms=100)
+
+            if not data:
                 continue
-        raise Exception("Could not detect device index")
+
+            # Check if this is a HID++ response (0x10 or 0x11)
+            if data[0] not in [0x10, 0x11]:
+                continue
+
+            # Check device index matches
+            if data[1] != self.device_index:
+                continue
+
+            # Check for error response (feature index 0x8F = error)
+            if data[2] == 0x8F:
+                error_code = data[5] if len(data) > 5 else 0
+                error_msgs = {
+                    0x00: "No error",
+                    0x01: "Unknown",
+                    0x02: "Invalid argument",
+                    0x03: "Out of range",
+                    0x04: "Hardware error",
+                    0x05: "Logitech internal",
+                    0x06: "Invalid feature index",
+                    0x07: "Invalid function",
+                    0x08: "Busy",
+                    0x09: "Unsupported",
+                }
+                raise Exception(f"HID++ error: {error_msgs.get(error_code, f'0x{error_code:02X}')}")
+
+            # Check software ID matches (lower 4 bits of byte 3)
+            if (data[3] & 0x0F) == self.SOFTWARE_ID:
+                return data
+
+        raise Exception("Timeout waiting for response")
 
     def get_feature_index(self, feature_id):
-        """Get the index of a feature from the root feature table"""
-        if self.device_index is None:
-            self.detect_device_index()
-
+        """Get the index of a feature using IRoot (feature 0x0000)"""
+        # IRoot.getFeature(featureId) - function 0
         params = [(feature_id >> 8) & 0xFF, feature_id & 0xFF]
-        response = self.send_short(self.device_index, 0x00, HIDPP_ROOT_GET_FEATURE, params)
+        response = self.send_short(0x00, 0x00, params)
+
         if response and len(response) >= 5:
-            return response[4]
-        return None
+            feature_index = response[4]
+            if feature_index == 0:
+                raise Exception(f"Feature 0x{feature_id:04X} not supported")
+            return feature_index
+        raise Exception("Invalid response from device")
 
     def init_dpi_feature(self):
         """Initialize DPI feature index"""
         self.dpi_feature_index = self.get_feature_index(HIDPP_FEATURE_ADJUSTABLE_DPI)
-        if self.dpi_feature_index is None or self.dpi_feature_index == 0:
-            raise Exception("Device does not support DPI adjustment")
         return self.dpi_feature_index
 
     def set_dpi(self, dpi, sensor_idx=0):
@@ -336,12 +355,9 @@ class LogitechHIDPP:
         if self.dpi_feature_index is None:
             self.init_dpi_feature()
 
-        # DPI is big-endian 16-bit
+        # setSensorDpi(sensorIdx, dpi) - function 3
         params = [sensor_idx, (dpi >> 8) & 0xFF, dpi & 0xFF]
-        response = self.send_short(self.device_index, self.dpi_feature_index,
-                       HIDPP_DPI_SET_SENSOR_DPI >> 4, params)
-        if response is None:
-            raise Exception("No response from device")
+        self.send_short(self.dpi_feature_index, 0x03, params)
         return True
 
     def get_dpi(self, sensor_idx=0):
@@ -349,9 +365,10 @@ class LogitechHIDPP:
         if self.dpi_feature_index is None:
             self.init_dpi_feature()
 
+        # getSensorDpi(sensorIdx) - function 2
         params = [sensor_idx]
-        response = self.send_short(self.device_index, self.dpi_feature_index,
-                                  HIDPP_DPI_GET_SENSOR_DPI >> 4, params)
+        response = self.send_short(self.dpi_feature_index, 0x02, params)
+
         if response and len(response) >= 6:
             return (response[4] << 8) | response[5]
         return None
@@ -422,37 +439,39 @@ def find_razer_mouse():
     return None, None, None
 
 
+def find_logitech_devices_by_pid(pid):
+    """Find all HID interfaces for a Logitech device"""
+    devices = {}
+    for device in hid.enumerate(LOGITECH_VENDOR_ID):
+        if device['product_id'] == pid:
+            usage = device.get('usage', 0)
+            usage_page = device.get('usage_page', 0)
+            # On Windows, usage indicates the interface type
+            # usage 1 = short messages, usage 2 = long messages
+            if usage_page == 0xFF00:
+                devices[usage] = device
+    return devices
+
+
 def find_logitech_mouse():
     """Find connected Logitech mouse with HID++ support"""
-    # First pass: look for HID++ interface (usage_page 0xFF00, usage 0x0001)
+    # Look for known gaming mice
     for device in hid.enumerate(LOGITECH_VENDOR_ID):
         pid = device['product_id']
-        usage_page = device.get('usage_page', 0)
-        usage = device.get('usage', 0)
-
         if pid in KNOWN_LOGITECH_MICE:
-            # HID++ 2.0 uses vendor page 0xFF00 with usage 0x0001
-            if usage_page == 0xFF00 and usage == 0x0001:
-                name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
-                return device, name, "logitech"
-
-    # Second pass: any vendor page 0xFF00
-    for device in hid.enumerate(LOGITECH_VENDOR_ID):
-        pid = device['product_id']
-        usage_page = device.get('usage_page', 0)
-
-        if pid in KNOWN_LOGITECH_MICE and usage_page == 0xFF00:
+            # Get all interfaces for this device
+            interfaces = find_logitech_devices_by_pid(pid)
             name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
-            return device, name, "logitech"
 
-    # Third pass: try interface 2 which is often HID++ on wired mice
-    for device in hid.enumerate(LOGITECH_VENDOR_ID):
-        pid = device['product_id']
-        iface = device.get('interface_number', -1)
-
-        if pid in KNOWN_LOGITECH_MICE and iface == 2:
-            name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
-            return device, name, "logitech"
+            # Prefer usage 2 (long messages) for HID++ 2.0
+            if 2 in interfaces:
+                return interfaces[2], name, "logitech"
+            # Fallback to usage 1 (short messages)
+            elif 1 in interfaces:
+                return interfaces[1], name, "logitech"
+            # Last resort: any vendor page interface
+            elif interfaces:
+                return list(interfaces.values())[0], name, "logitech"
 
     return None, None, None
 
@@ -495,41 +514,23 @@ def find_all_mice():
                 mice.append((device, name, "razer"))
                 break
 
-    # Find Logitech mice - prefer HID++ interface
+    # Find Logitech mice - prefer usage 2 (long messages)
     found_logitech = set()
-
-    # First: usage_page 0xFF00 + usage 0x0001 (best for HID++)
     for device in hid.enumerate(LOGITECH_VENDOR_ID):
         pid = device['product_id']
-        usage_page = device.get('usage_page', 0)
-        usage = device.get('usage', 0)
-
         if pid in KNOWN_LOGITECH_MICE and pid not in found_logitech:
-            if usage_page == 0xFF00 and usage == 0x0001:
-                name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
-                mice.append((device, name, "logitech"))
+            interfaces = find_logitech_devices_by_pid(pid)
+            name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
+
+            # Prefer usage 2 for HID++ 2.0
+            if 2 in interfaces:
+                mice.append((interfaces[2], name, "logitech"))
                 found_logitech.add(pid)
-
-    # Second: any usage_page 0xFF00
-    for device in hid.enumerate(LOGITECH_VENDOR_ID):
-        pid = device['product_id']
-        usage_page = device.get('usage_page', 0)
-
-        if pid in KNOWN_LOGITECH_MICE and pid not in found_logitech:
-            if usage_page == 0xFF00:
-                name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
-                mice.append((device, name, "logitech"))
+            elif 1 in interfaces:
+                mice.append((interfaces[1], name, "logitech"))
                 found_logitech.add(pid)
-
-    # Third: interface 2 (common for wired mice)
-    for device in hid.enumerate(LOGITECH_VENDOR_ID):
-        pid = device['product_id']
-        iface = device.get('interface_number', -1)
-
-        if pid in KNOWN_LOGITECH_MICE and pid not in found_logitech:
-            if iface == 2:
-                name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
-                mice.append((device, name, "logitech"))
+            elif interfaces:
+                mice.append((list(interfaces.values())[0], name, "logitech"))
                 found_logitech.add(pid)
 
     return mice
