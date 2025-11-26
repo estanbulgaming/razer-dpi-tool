@@ -1,0 +1,13 @@
+# Flat Mode - No EQ modifications
+# EqualizerAPO configuration
+# Use this for music, movies, or general use
+
+Preamp: 0 dB
+
+# All filters disabled - flat response
+Filter 1: OFF PK Fc 100 Hz Gain 0 dB Q 1.0
+Filter 2: OFF PK Fc 250 Hz Gain 0 dB Q 1.0
+Filter 3: OFF PK Fc 1000 Hz Gain 0 dB Q 1.0
+Filter 4: OFF PK Fc 2000 Hz Gain 0 dB Q 1.0
+Filter 5: OFF PK Fc 4000 Hz Gain 0 dB Q 1.0
+Filter 6: OFF PK Fc 8000 Hz Gain 0 dB Q 1.0

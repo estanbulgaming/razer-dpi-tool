@@ -1,16 +1,23 @@
 """
 DPI Tool - Razer & Logitech
-Simple tool to change DPI without vendor software
+Simple tool to change DPI and audio EQ without vendor software
 """
 
 import hid
 import tkinter as tk
 from tkinter import ttk, messagebox
 import struct
+import os
+import shutil
+from pathlib import Path
 
 # Vendor IDs
 RAZER_VENDOR_ID = 0x1532
 LOGITECH_VENDOR_ID = 0x046D
+
+# EqualizerAPO paths
+EQUALIZER_APO_PATH = Path(os.environ.get('PROGRAMFILES', 'C:\\Program Files')) / 'EqualizerAPO' / 'config'
+EQUALIZER_APO_CONFIG = EQUALIZER_APO_PATH / 'config.txt'
 
 # Known Razer Mouse Product IDs (from OpenRazer)
 KNOWN_RAZER_MICE = {
@@ -155,6 +162,32 @@ KNOWN_LOGITECH_MICE = {
     0xC545: "Lightspeed Receiver",
 }
 
+# EQ Presets (embedded - no external files needed)
+EQ_PRESETS = {
+    "fps": """# FPS Mode - Optimized for footsteps
+Preamp: -3 dB
+Filter 1: ON LP Fc 60 Hz Gain -6 dB
+Filter 2: ON PK Fc 100 Hz Gain -4 dB Q 1.0
+Filter 3: ON PK Fc 250 Hz Gain -2 dB Q 1.0
+Filter 4: ON PK Fc 1000 Hz Gain 3 dB Q 1.5
+Filter 5: ON PK Fc 2000 Hz Gain 4 dB Q 1.5
+Filter 6: ON PK Fc 3500 Hz Gain 3 dB Q 1.5
+Filter 7: ON PK Fc 6000 Hz Gain 2 dB Q 1.0
+Filter 8: ON HP Fc 10000 Hz Gain -2 dB
+""",
+    "flat": """# Flat Mode - No EQ
+Preamp: 0 dB
+""",
+    "music": """# Music Mode - Balanced
+Preamp: -2 dB
+Filter 1: ON PK Fc 60 Hz Gain 3 dB Q 1.0
+Filter 2: ON PK Fc 150 Hz Gain 2 dB Q 1.0
+Filter 3: ON PK Fc 3000 Hz Gain 1 dB Q 1.0
+Filter 4: ON PK Fc 8000 Hz Gain 2 dB Q 1.0
+Filter 5: ON PK Fc 12000 Hz Gain 2 dB Q 1.0
+""",
+}
+
 # HID++ Constants
 HIDPP_SHORT_MESSAGE = 0x10
 HIDPP_LONG_MESSAGE = 0x11
@@ -283,6 +316,49 @@ class LogitechHIDPP:
         if len(response) >= 6:
             return (response[4] << 8) | response[5]
         return None
+
+
+def is_equalizer_apo_installed():
+    """Check if EqualizerAPO is installed"""
+    return EQUALIZER_APO_PATH.exists()
+
+
+def set_eq_preset(preset_name: str) -> bool:
+    """Set EqualizerAPO preset"""
+    if preset_name not in EQ_PRESETS:
+        raise Exception(f"Unknown preset: {preset_name}")
+
+    if not is_equalizer_apo_installed():
+        raise Exception("EqualizerAPO not installed!\n\nPlease install from:\nhttps://sourceforge.net/projects/equalizerapo/")
+
+    try:
+        # Write the preset to config.txt
+        with open(EQUALIZER_APO_CONFIG, 'w') as f:
+            f.write(EQ_PRESETS[preset_name])
+        return True
+    except PermissionError:
+        raise Exception("Cannot write to EqualizerAPO config.\nTry running as Administrator.")
+    except Exception as e:
+        raise Exception(f"Failed to set EQ: {e}")
+
+
+def get_current_eq_preset() -> str:
+    """Try to detect current EQ preset"""
+    if not is_equalizer_apo_installed():
+        return "unknown"
+
+    try:
+        with open(EQUALIZER_APO_CONFIG, 'r') as f:
+            content = f.read()
+            if "FPS Mode" in content:
+                return "fps"
+            elif "Music Mode" in content:
+                return "music"
+            elif "Flat Mode" in content or content.strip() == "" or "Preamp: 0" in content:
+                return "flat"
+    except:
+        pass
+    return "custom"
 
 
 def find_razer_mouse():
@@ -425,19 +501,20 @@ def set_dpi(device_info, brand: str, dpi: int) -> bool:
 class DPIApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("DPI Tool")
-        self.root.geometry("350x340")
+        self.root.title("Gaming Tool")
+        self.root.geometry("380x480")
         self.root.resizable(False, False)
 
         self.current_device = None
         self.current_brand = None
         self.mice_list = []
+        self.current_eq = "unknown"
 
         # Device selection
-        device_frame = ttk.LabelFrame(self.root, text="Device", padding=10)
+        device_frame = ttk.LabelFrame(self.root, text="Mouse", padding=10)
         device_frame.pack(fill='x', padx=20, pady=10)
 
-        self.device_combo = ttk.Combobox(device_frame, state='readonly', width=35)
+        self.device_combo = ttk.Combobox(device_frame, state='readonly', width=32)
         self.device_combo.pack(side='left', padx=5)
         self.device_combo.bind('<<ComboboxSelected>>', self.on_device_select)
 
@@ -446,11 +523,11 @@ class DPIApp:
 
         # Status label
         self.status_var = tk.StringVar()
-        self.status_var.set("Click Refresh to scan for mice")
+        self.status_var.set("Click Refresh to scan")
         status_label = ttk.Label(self.root, textvariable=self.status_var)
         status_label.pack(pady=5)
 
-        # Preset buttons frame
+        # Preset DPI buttons frame
         preset_frame = ttk.LabelFrame(self.root, text="Preset DPI", padding=10)
         preset_frame.pack(fill='x', padx=20, pady=5)
 
@@ -466,7 +543,7 @@ class DPIApp:
 
         # Custom DPI frame
         custom_frame = ttk.LabelFrame(self.root, text="Custom DPI", padding=10)
-        custom_frame.pack(fill='x', padx=20, pady=10)
+        custom_frame.pack(fill='x', padx=20, pady=5)
 
         self.custom_entry = ttk.Entry(custom_frame, width=10)
         self.custom_entry.pack(side='left', padx=5)
@@ -479,21 +556,76 @@ class DPIApp:
         )
         apply_btn.pack(side='left', padx=5)
 
-        # Result label
+        # DPI Result label
         self.result_var = tk.StringVar()
         result_label = ttk.Label(self.root, textvariable=self.result_var)
-        result_label.pack(pady=10)
+        result_label.pack(pady=5)
+
+        # Separator
+        ttk.Separator(self.root, orient='horizontal').pack(fill='x', padx=20, pady=10)
+
+        # Audio EQ Frame
+        eq_frame = ttk.LabelFrame(self.root, text="Audio EQ (EqualizerAPO)", padding=10)
+        eq_frame.pack(fill='x', padx=20, pady=5)
+
+        # EQ Status
+        self.eq_status_var = tk.StringVar()
+        self.update_eq_status()
+        eq_status_label = ttk.Label(eq_frame, textvariable=self.eq_status_var)
+        eq_status_label.pack(pady=5)
+
+        # EQ Buttons
+        eq_btn_frame = ttk.Frame(eq_frame)
+        eq_btn_frame.pack(fill='x', pady=5)
+
+        self.fps_btn = ttk.Button(
+            eq_btn_frame,
+            text="FPS Mode",
+            command=lambda: self.apply_eq("fps"),
+            width=12
+        )
+        self.fps_btn.pack(side='left', padx=5, expand=True)
+
+        self.music_btn = ttk.Button(
+            eq_btn_frame,
+            text="Music Mode",
+            command=lambda: self.apply_eq("music"),
+            width=12
+        )
+        self.music_btn.pack(side='left', padx=5, expand=True)
+
+        self.flat_btn = ttk.Button(
+            eq_btn_frame,
+            text="Flat (Off)",
+            command=lambda: self.apply_eq("flat"),
+            width=12
+        )
+        self.flat_btn.pack(side='left', padx=5, expand=True)
+
+        # EQ Result
+        self.eq_result_var = tk.StringVar()
+        eq_result_label = ttk.Label(eq_frame, textvariable=self.eq_result_var)
+        eq_result_label.pack(pady=5)
 
         # Info
         info_label = ttk.Label(
             self.root,
-            text="Supports Razer and Logitech gaming mice",
+            text="Razer/Logitech DPI + EqualizerAPO EQ",
             foreground="gray"
         )
-        info_label.pack(pady=5)
+        info_label.pack(pady=10)
 
         # Auto-refresh on start
         self.root.after(100, self.refresh)
+
+    def update_eq_status(self):
+        if not is_equalizer_apo_installed():
+            self.eq_status_var.set("EqualizerAPO: Not installed")
+            self.current_eq = "not_installed"
+        else:
+            self.current_eq = get_current_eq_preset()
+            preset_names = {"fps": "FPS Mode", "music": "Music Mode", "flat": "Flat", "custom": "Custom", "unknown": "Unknown"}
+            self.eq_status_var.set(f"Current: {preset_names.get(self.current_eq, self.current_eq)}")
 
     def refresh(self):
         self.mice_list = find_all_mice()
@@ -509,6 +641,8 @@ class DPIApp:
             self.current_brand = None
             self.status_var.set("No mice found!")
             self.result_var.set("")
+
+        self.update_eq_status()
 
     def on_device_select(self, event):
         idx = self.device_combo.current()
@@ -540,6 +674,16 @@ class DPIApp:
             self.apply_dpi(dpi)
         except ValueError:
             messagebox.showwarning("Warning", "Please enter a valid number")
+
+    def apply_eq(self, preset: str):
+        try:
+            set_eq_preset(preset)
+            preset_names = {"fps": "FPS Mode", "music": "Music Mode", "flat": "Flat"}
+            self.eq_result_var.set(f"EQ: {preset_names.get(preset, preset)} applied!")
+            self.update_eq_status()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+            self.eq_result_var.set("Failed!")
 
     def run(self):
         self.root.mainloop()
