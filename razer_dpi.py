@@ -191,7 +191,8 @@ Filter 5: ON PK Fc 12000 Hz Gain 2 dB Q 1.0
 # HID++ Constants
 HIDPP_SHORT_MESSAGE = 0x10
 HIDPP_LONG_MESSAGE = 0x11
-HIDPP_DEVICE_RECEIVER = 0xFF
+HIDPP_DEVICE_WIRED = 0x01  # Wired devices use index 1
+HIDPP_DEVICE_WIRELESS = 0x01  # First paired device on receiver
 HIDPP_FEATURE_ROOT = 0x0000
 HIDPP_FEATURE_ADJUSTABLE_DPI = 0x2201
 
@@ -240,8 +241,9 @@ class LogitechHIDPP:
     def __init__(self, device_path):
         self.device = hid.device()
         self.device.open_path(device_path)
-        self.device.set_nonblocking(False)
+        self.device.set_nonblocking(True)  # Non-blocking for better response handling
         self.dpi_feature_index = None
+        self.device_index = HIDPP_DEVICE_WIRED  # Default to wired
 
     def close(self):
         self.device.close()
@@ -268,21 +270,27 @@ class LogitechHIDPP:
         self.device.write(msg)
         return self._read_response()
 
-    def _read_response(self, timeout_ms=1000):
-        """Read HID++ response"""
-        data = self.device.read(64, timeout_ms)
-        if not data:
-            raise Exception("No response from device")
-        # Check for error response (0x8F)
-        if len(data) >= 4 and data[2] == 0x8F:
-            error_code = data[4] if len(data) > 4 else 0
-            raise Exception(f"HID++ error: 0x{error_code:02X}")
-        return data
+    def _read_response(self, timeout_ms=2000):
+        """Read HID++ response with retry"""
+        import time
+        start = time.time()
+        while (time.time() - start) * 1000 < timeout_ms:
+            data = self.device.read(64)
+            if data:
+                # Skip mouse movement/button reports (report ID < 0x10)
+                if data[0] >= 0x10:
+                    # Check for error response (0x8F in sub_id position)
+                    if len(data) >= 4 and data[2] == 0x8F:
+                        error_code = data[4] if len(data) > 4 else 0
+                        raise Exception(f"HID++ error: 0x{error_code:02X}")
+                    return data
+            time.sleep(0.01)  # Small delay between reads
+        raise Exception("read error")
 
     def get_feature_index(self, feature_id):
         """Get the index of a feature from the root feature table"""
         params = [(feature_id >> 8) & 0xFF, feature_id & 0xFF]
-        response = self.send_short(HIDPP_DEVICE_RECEIVER, 0x00, HIDPP_ROOT_GET_FEATURE, params)
+        response = self.send_short(self.device_index, 0x00, HIDPP_ROOT_GET_FEATURE, params)
         if len(response) >= 5:
             return response[4]
         return None
@@ -301,7 +309,7 @@ class LogitechHIDPP:
 
         # DPI is big-endian 16-bit
         params = [sensor_idx, (dpi >> 8) & 0xFF, dpi & 0xFF]
-        self.send_short(HIDPP_DEVICE_RECEIVER, self.dpi_feature_index,
+        self.send_short(self.device_index, self.dpi_feature_index,
                        HIDPP_DPI_SET_SENSOR_DPI >> 4, params)
         return True
 
@@ -311,7 +319,7 @@ class LogitechHIDPP:
             self.init_dpi_feature()
 
         params = [sensor_idx]
-        response = self.send_short(HIDPP_DEVICE_RECEIVER, self.dpi_feature_index,
+        response = self.send_short(self.device_index, self.dpi_feature_index,
                                   HIDPP_DPI_GET_SENSOR_DPI >> 4, params)
         if len(response) >= 6:
             return (response[4] << 8) | response[5]
