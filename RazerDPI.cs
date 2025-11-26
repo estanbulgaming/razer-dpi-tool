@@ -173,6 +173,13 @@ class RazerDPI : Form
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool WriteFile(IntPtr hFile, byte[] lpBuffer, uint nNumberOfBytesToWrite, out uint lpNumberOfBytesWritten, IntPtr lpOverlapped);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(IntPtr hDevice, uint dwIoControlCode, byte[] lpInBuffer, uint nInBufferSize, byte[] lpOutBuffer, uint nOutBufferSize, out uint lpBytesReturned, IntPtr lpOverlapped);
+
+    const uint IOCTL_HID_SET_FEATURE = 0xB0191;
+    const uint IOCTL_HID_GET_FEATURE = 0xB0192;
+    const uint IOCTL_HID_SET_OUTPUT_REPORT = 0xB0195;
+
     [DllImport("hid.dll", SetLastError = true, CharSet = CharSet.Auto)]
     static extern bool HidD_GetProductString(IntPtr hidDeviceObject, byte[] buffer, uint bufferLength);
 
@@ -753,6 +760,26 @@ class RazerDPI : Form
                 result = WriteFile(handle, report, (uint)report.Length, out bytesWritten, IntPtr.Zero);
                 error = Marshal.GetLastWin32Error();
                 Log("WriteFile result: " + result.ToString() + ", bytesWritten: " + bytesWritten.ToString() + ", error: " + error.ToString());
+            }
+
+            if (!result)
+            {
+                // Method 6: DeviceIoControl with IOCTL_HID_SET_FEATURE
+                Log("Trying DeviceIoControl IOCTL_HID_SET_FEATURE...");
+                uint bytesReturned;
+                result = DeviceIoControl(handle, IOCTL_HID_SET_FEATURE, report, (uint)report.Length, null, 0, out bytesReturned, IntPtr.Zero);
+                error = Marshal.GetLastWin32Error();
+                Log("DeviceIoControl SET_FEATURE result: " + result.ToString() + ", error: " + error.ToString());
+            }
+
+            if (!result)
+            {
+                // Method 7: DeviceIoControl with IOCTL_HID_SET_OUTPUT_REPORT
+                Log("Trying DeviceIoControl IOCTL_HID_SET_OUTPUT_REPORT...");
+                uint bytesReturned;
+                result = DeviceIoControl(handle, IOCTL_HID_SET_OUTPUT_REPORT, report, (uint)report.Length, null, 0, out bytesReturned, IntPtr.Zero);
+                error = Marshal.GetLastWin32Error();
+                Log("DeviceIoControl SET_OUTPUT result: " + result.ToString() + ", error: " + error.ToString());
             }
 
             if (result)
