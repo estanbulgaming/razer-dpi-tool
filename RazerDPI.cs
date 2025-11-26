@@ -168,8 +168,9 @@ class RazerDPI : Form
 
     void ApplyCustom_Click(object sender, EventArgs e)
     {
-        var input = Controls.Find("customInput", true)[0] as TextBox;
-        if (int.TryParse(input.Text, out int dpi))
+        TextBox input = (TextBox)Controls.Find("customInput", true)[0];
+        int dpi;
+        if (int.TryParse(input.Text, out dpi))
         {
             if (dpi < 100 || dpi > 30000)
             {
