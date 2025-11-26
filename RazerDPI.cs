@@ -162,6 +162,12 @@ class RazerDPI : Form
     [DllImport("hid.dll", SetLastError = true)]
     static extern bool HidD_SetFeature(IntPtr hidDeviceObject, byte[] reportBuffer, uint reportBufferLength);
 
+    [DllImport("hid.dll", SetLastError = true)]
+    static extern bool HidD_SetOutputReport(IntPtr hidDeviceObject, byte[] reportBuffer, uint reportBufferLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool WriteFile(IntPtr hFile, byte[] lpBuffer, uint nNumberOfBytesToWrite, out uint lpNumberOfBytesWritten, IntPtr lpOverlapped);
+
     [DllImport("hid.dll", SetLastError = true, CharSet = CharSet.Auto)]
     static extern bool HidD_GetProductString(IntPtr hidDeviceObject, byte[] buffer, uint bufferLength);
 
@@ -443,7 +449,13 @@ class RazerDPI : Form
                     {
                         string devicePath = Marshal.PtrToStringAuto(detailDataBuffer + 4);
 
+                        // Try read/write first, then read-only if that fails
                         IntPtr handle = CreateFile(devicePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+                        if (handle == INVALID_HANDLE_VALUE)
+                        {
+                            // Try read-only for enumeration
+                            handle = CreateFile(devicePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+                        }
                         if (handle != INVALID_HANDLE_VALUE)
                         {
                             HIDD_ATTRIBUTES attrs = new HIDD_ATTRIBUTES();
@@ -482,7 +494,23 @@ class RazerDPI : Form
                                         productIdCount[pidKey] = 1;
                                     }
 
-                                    Log("Found Razer device: VID=0x" + attrs.VendorID.ToString("X4") + " PID=0x" + pidKey + " #" + ifaceNum.ToString());
+                                    // Extract MI (interface) number from path
+                                    string miInfo = "";
+                                    int miIdx = devicePath.IndexOf("&mi_");
+                                    if (miIdx >= 0 && miIdx + 7 < devicePath.Length)
+                                    {
+                                        miInfo = " MI" + devicePath.Substring(miIdx + 4, 2);
+                                    }
+
+                                    // Extract collection number from path
+                                    string colInfo = "";
+                                    int colIdx = devicePath.IndexOf("&col");
+                                    if (colIdx >= 0 && colIdx + 6 < devicePath.Length)
+                                    {
+                                        colInfo = " Col" + devicePath.Substring(colIdx + 4, 2);
+                                    }
+
+                                    Log("Found Razer device: VID=0x" + attrs.VendorID.ToString("X4") + " PID=0x" + pidKey + miInfo + colInfo);
                                     Log("  Path: " + devicePath);
                                     Log("  Name: " + productName);
                                     Log("  IsKnownMouse: " + isKnown.ToString());
@@ -491,7 +519,7 @@ class RazerDPI : Form
                                     {
                                         Path = devicePath,
                                         ProductID = attrs.ProductID,
-                                        Name = productName + " (0x" + pidKey + " #" + ifaceNum.ToString() + ")",
+                                        Name = productName + " (0x" + pidKey + miInfo + colInfo + ")",
                                         IsKnownMouse = isKnown
                                     });
                                 }
@@ -512,6 +540,20 @@ class RazerDPI : Form
             SetupDiDestroyDeviceInfoList(deviceInfoSet);
         }
         Log("Total Razer devices found: " + devices.Count.ToString());
+
+        // Sort: prioritize mi_00 (control interface) for known mice
+        devices.Sort((a, b) => {
+            // Known mice first
+            if (a.IsKnownMouse != b.IsKnownMouse)
+                return b.IsKnownMouse.CompareTo(a.IsKnownMouse);
+            // Then by MI number (mi_00 first)
+            bool aHasMi00 = a.Path.Contains("&mi_00");
+            bool bHasMi00 = b.Path.Contains("&mi_00");
+            if (aHasMi00 != bHasMi00)
+                return bHasMi00.CompareTo(aHasMi00);
+            return 0;
+        });
+
         SaveLog();
         return devices;
     }
@@ -585,11 +627,34 @@ class RazerDPI : Form
             Log("Report built, length: " + report.Length.ToString());
             Log("Report hex: " + BitConverter.ToString(report, 0, 20));
 
-            bool result = HidD_SetFeature(handle, report, (uint)report.Length);
-            int error = Marshal.GetLastWin32Error();
+            // Try multiple methods to send the report
+            bool result = false;
+            int error = 0;
 
-            Log("HidD_SetFeature result: " + result.ToString());
-            Log("GetLastWin32Error: " + error.ToString());
+            // Method 1: HidD_SetFeature
+            Log("Trying HidD_SetFeature...");
+            result = HidD_SetFeature(handle, report, (uint)report.Length);
+            error = Marshal.GetLastWin32Error();
+            Log("HidD_SetFeature result: " + result.ToString() + ", error: " + error.ToString());
+
+            if (!result)
+            {
+                // Method 2: HidD_SetOutputReport
+                Log("Trying HidD_SetOutputReport...");
+                result = HidD_SetOutputReport(handle, report, (uint)report.Length);
+                error = Marshal.GetLastWin32Error();
+                Log("HidD_SetOutputReport result: " + result.ToString() + ", error: " + error.ToString());
+            }
+
+            if (!result)
+            {
+                // Method 3: WriteFile
+                Log("Trying WriteFile...");
+                uint bytesWritten;
+                result = WriteFile(handle, report, (uint)report.Length, out bytesWritten, IntPtr.Zero);
+                error = Marshal.GetLastWin32Error();
+                Log("WriteFile result: " + result.ToString() + ", bytesWritten: " + bytesWritten.ToString() + ", error: " + error.ToString());
+            }
 
             if (result)
             {
@@ -599,7 +664,7 @@ class RazerDPI : Form
             }
             else
             {
-                Log("FAILED: HidD_SetFeature returned false, error: " + error.ToString());
+                Log("FAILED: All methods failed, last error: " + error.ToString());
                 MessageBox.Show("Failed to set DPI. Error code: " + error.ToString() + "\nTry selecting a different device.\nCheck razer_dpi_log.txt for details.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 resultLabel.Text = "Failed!";
                 resultLabel.ForeColor = Color.Red;
