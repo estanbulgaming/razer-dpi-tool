@@ -12,6 +12,10 @@ class RazerDevice
     public ushort ProductID;
     public string Name;
     public bool IsKnownMouse;
+    public ushort FeatureReportLength;
+    public ushort OutputReportLength;
+    public ushort Usage;
+    public ushort UsagePage;
 }
 
 class RazerDPI : Form
@@ -170,6 +174,37 @@ class RazerDPI : Form
 
     [DllImport("hid.dll", SetLastError = true, CharSet = CharSet.Auto)]
     static extern bool HidD_GetProductString(IntPtr hidDeviceObject, byte[] buffer, uint bufferLength);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    static extern bool HidD_GetPreparsedData(IntPtr hidDeviceObject, out IntPtr preparsedData);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    static extern bool HidD_FreePreparsedData(IntPtr preparsedData);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    static extern int HidP_GetCaps(IntPtr preparsedData, out HIDP_CAPS capabilities);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct HIDP_CAPS
+    {
+        public ushort Usage;
+        public ushort UsagePage;
+        public ushort InputReportByteLength;
+        public ushort OutputReportByteLength;
+        public ushort FeatureReportByteLength;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 17)]
+        public ushort[] Reserved;
+        public ushort NumberLinkCollectionNodes;
+        public ushort NumberInputButtonCaps;
+        public ushort NumberInputValueCaps;
+        public ushort NumberInputDataIndices;
+        public ushort NumberOutputButtonCaps;
+        public ushort NumberOutputValueCaps;
+        public ushort NumberOutputDataIndices;
+        public ushort NumberFeatureButtonCaps;
+        public ushort NumberFeatureValueCaps;
+        public ushort NumberFeatureDataIndices;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     struct SP_DEVICE_INTERFACE_DATA
@@ -451,10 +486,12 @@ class RazerDPI : Form
 
                         // Try read/write first, then read-only if that fails
                         IntPtr handle = CreateFile(devicePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+                        bool readOnly = false;
                         if (handle == INVALID_HANDLE_VALUE)
                         {
                             // Try read-only for enumeration
                             handle = CreateFile(devicePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+                            readOnly = true;
                         }
                         if (handle != INVALID_HANDLE_VALUE)
                         {
@@ -510,17 +547,41 @@ class RazerDPI : Form
                                         colInfo = " Col" + devicePath.Substring(colIdx + 4, 2);
                                     }
 
+                                    // Get HID capabilities
+                                    ushort featureLen = 0, outputLen = 0, usage = 0, usagePage = 0;
+                                    IntPtr preparsedData;
+                                    if (HidD_GetPreparsedData(handle, out preparsedData))
+                                    {
+                                        HIDP_CAPS caps;
+                                        if (HidP_GetCaps(preparsedData, out caps) == 0x00110000)
+                                        {
+                                            featureLen = caps.FeatureReportByteLength;
+                                            outputLen = caps.OutputReportByteLength;
+                                            usage = caps.Usage;
+                                            usagePage = caps.UsagePage;
+                                        }
+                                        HidD_FreePreparsedData(preparsedData);
+                                    }
+
+                                    string capsInfo = " Feat=" + featureLen.ToString() + " Out=" + outputLen.ToString() + " Usage=" + usagePage.ToString("X2") + ":" + usage.ToString("X2");
+
                                     Log("Found Razer device: VID=0x" + attrs.VendorID.ToString("X4") + " PID=0x" + pidKey + miInfo + colInfo);
                                     Log("  Path: " + devicePath);
                                     Log("  Name: " + productName);
                                     Log("  IsKnownMouse: " + isKnown.ToString());
+                                    Log("  FeatureReportLen: " + featureLen.ToString() + ", OutputReportLen: " + outputLen.ToString());
+                                    Log("  UsagePage: 0x" + usagePage.ToString("X4") + ", Usage: 0x" + usage.ToString("X4"));
 
                                     devices.Add(new RazerDevice
                                     {
                                         Path = devicePath,
                                         ProductID = attrs.ProductID,
-                                        Name = productName + " (0x" + pidKey + miInfo + colInfo + ")",
-                                        IsKnownMouse = isKnown
+                                        Name = productName + " (0x" + pidKey + miInfo + colInfo + capsInfo + ")",
+                                        IsKnownMouse = isKnown,
+                                        FeatureReportLength = featureLen,
+                                        OutputReportLength = outputLen,
+                                        Usage = usage,
+                                        UsagePage = usagePage
                                     });
                                 }
                             }
@@ -623,6 +684,10 @@ class RazerDPI : Form
 
         try
         {
+            Log("Device FeatureReportLength: " + selectedDevice.FeatureReportLength.ToString());
+            Log("Device OutputReportLength: " + selectedDevice.OutputReportLength.ToString());
+            Log("Device UsagePage: 0x" + selectedDevice.UsagePage.ToString("X4") + ", Usage: 0x" + selectedDevice.Usage.ToString("X4"));
+
             byte[] report = BuildDPIReport(dpi);
             Log("Report built, length: " + report.Length.ToString());
             Log("Report hex: " + BitConverter.ToString(report, 0, 20));
@@ -631,24 +696,50 @@ class RazerDPI : Form
             bool result = false;
             int error = 0;
 
-            // Method 1: HidD_SetFeature
-            Log("Trying HidD_SetFeature...");
-            result = HidD_SetFeature(handle, report, (uint)report.Length);
-            error = Marshal.GetLastWin32Error();
-            Log("HidD_SetFeature result: " + result.ToString() + ", error: " + error.ToString());
+            // Method 1: HidD_SetFeature with device's feature report length
+            if (selectedDevice.FeatureReportLength > 0)
+            {
+                Log("Trying HidD_SetFeature with device length " + selectedDevice.FeatureReportLength.ToString() + "...");
+                byte[] sizedReport = new byte[selectedDevice.FeatureReportLength];
+                Array.Copy(report, 0, sizedReport, 0, Math.Min(report.Length, sizedReport.Length));
+                result = HidD_SetFeature(handle, sizedReport, (uint)sizedReport.Length);
+                error = Marshal.GetLastWin32Error();
+                Log("HidD_SetFeature (sized) result: " + result.ToString() + ", error: " + error.ToString());
+            }
 
             if (!result)
             {
-                // Method 2: HidD_SetOutputReport
+                // Method 2: HidD_SetFeature with standard 91 bytes
+                Log("Trying HidD_SetFeature with 91 bytes...");
+                result = HidD_SetFeature(handle, report, (uint)report.Length);
+                error = Marshal.GetLastWin32Error();
+                Log("HidD_SetFeature result: " + result.ToString() + ", error: " + error.ToString());
+            }
+
+            if (!result)
+            {
+                // Method 3: HidD_SetOutputReport
                 Log("Trying HidD_SetOutputReport...");
                 result = HidD_SetOutputReport(handle, report, (uint)report.Length);
                 error = Marshal.GetLastWin32Error();
                 Log("HidD_SetOutputReport result: " + result.ToString() + ", error: " + error.ToString());
             }
 
+            if (!result && selectedDevice.OutputReportLength > 0)
+            {
+                // Method 4: WriteFile with device's output report length
+                Log("Trying WriteFile with device length " + selectedDevice.OutputReportLength.ToString() + "...");
+                byte[] outputReport = new byte[selectedDevice.OutputReportLength];
+                Array.Copy(report, 0, outputReport, 0, Math.Min(report.Length, outputReport.Length));
+                uint bytesWritten;
+                result = WriteFile(handle, outputReport, (uint)outputReport.Length, out bytesWritten, IntPtr.Zero);
+                error = Marshal.GetLastWin32Error();
+                Log("WriteFile (sized) result: " + result.ToString() + ", bytesWritten: " + bytesWritten.ToString() + ", error: " + error.ToString());
+            }
+
             if (!result)
             {
-                // Method 3: WriteFile
+                // Method 5: WriteFile with standard report
                 Log("Trying WriteFile...");
                 uint bytesWritten;
                 result = WriteFile(handle, report, (uint)report.Length, out bytesWritten, IntPtr.Zero);
