@@ -40,18 +40,15 @@ jobs:
         run: |
           pip install hidapi pyinstaller
 
-      - name: Build with PyInstaller (Console for debug)
+      - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --console --name RazerDPI-Python razer_dpi.py
-          pyinstaller --onefile --console --name LogitechTest test_logitech.py
+          pyinstaller --onefile --windowed --name RazerDPI-Python razer_dpi.py
 
       - name: Upload Python artifact
         uses: actions/upload-artifact@v4
         with:
           name: RazerDPI-Python
-          path: |
-            dist/RazerDPI-Python.exe
-            dist/LogitechTest.exe
+          path: dist/RazerDPI-Python.exe
 
   release:
     needs: [build-csharp, build-python]
@@ -74,6 +71,5 @@ jobs:
           files: |
             RazerDPI.exe
             RazerDPI-Python.exe
-            LogitechTest.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

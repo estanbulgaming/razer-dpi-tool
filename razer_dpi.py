@@ -1,23 +1,14 @@
 """
-DPI Tool - Razer & Logitech
-Simple tool to change DPI and audio EQ without vendor software
+Razer DPI Tool
+Simple tool to change DPI on Razer mice without Synapse
 """
 
 import hid
 import tkinter as tk
 from tkinter import ttk, messagebox
-import struct
-import os
-import shutil
-from pathlib import Path
 
-# Vendor IDs
+# Vendor ID
 RAZER_VENDOR_ID = 0x1532
-LOGITECH_VENDOR_ID = 0x046D
-
-# EqualizerAPO paths
-EQUALIZER_APO_PATH = Path(os.environ.get('PROGRAMFILES', 'C:\\Program Files')) / 'EqualizerAPO' / 'config'
-EQUALIZER_APO_CONFIG = EQUALIZER_APO_PATH / 'config.txt'
 
 # Known Razer Mouse Product IDs (from OpenRazer)
 KNOWN_RAZER_MICE = {
@@ -114,95 +105,6 @@ KNOWN_RAZER_MICE = {
     0x00CE: "Viper V3 Pro (Wireless)",
 }
 
-# Known Logitech Gaming Mice (HID++ 2.0 compatible)
-KNOWN_LOGITECH_MICE = {
-    0xC24A: "G600",
-    0xC246: "G700",
-    0xC531: "G700s (Receiver)",
-    0xC07C: "G700s (Wired)",
-    0xC332: "G502 Hero",
-    0xC08B: "G502 Hero (Wired)",
-    0xC33C: "G502 Lightspeed (Receiver)",
-    0xC08D: "G502 Lightspeed (Wired)",
-    0xC539: "G502 X (Receiver)",
-    0xC098: "G502 X (Wired)",
-    0xC53A: "G502 X Plus (Receiver)",
-    0xC099: "G502 X Plus (Wired)",
-    0xC07D: "G402",
-    0xC046: "G403 Hero (Wired)",
-    0xC082: "G403 Hero",
-    0xC083: "G403 Lightspeed",
-    0xC08F: "G403 (Wired)",
-    0xC084: "G203",
-    0xC092: "G203 Lightsync",
-    0xC334: "G Pro (Receiver)",
-    0xC088: "G Pro (Wired)",
-    0xC539: "G Pro X Superlight (Receiver)",
-    0xC094: "G Pro X Superlight (Wired)",
-    0xC53D: "G Pro X Superlight 2 (Receiver)",
-    0xC09B: "G Pro X Superlight 2 (Wired)",
-    0xC335: "G Pro Wireless (Receiver)",
-    0xC08A: "G Pro Wireless (Wired)",
-    0xC07E: "G102",
-    0xC08E: "G102 Lightsync",
-    0xC087: "G703 Hero (Wired)",
-    0xC336: "G703 Hero (Receiver)",
-    0xC337: "G903 Hero (Receiver)",
-    0xC086: "G903 Hero (Wired)",
-    0xC091: "G304/G305 (Receiver)",
-    0xC085: "G304/G305 (Wired)",
-    0xC547: "G309 (Receiver)",
-    0xC093: "G309 (Wired)",
-    0xC095: "G604 (Receiver)",
-    0xC096: "MX Master 3",
-    0xC548: "MX Master 3S (Receiver)",
-    0xB034: "MX Master 3S (Bluetooth)",
-    0xC52B: "Unifying Receiver",
-    0xC534: "Nano Receiver",
-    0xC545: "Lightspeed Receiver",
-}
-
-# EQ Presets (embedded - no external files needed)
-EQ_PRESETS = {
-    "fps": """# FPS Mode - Optimized for footsteps
-Preamp: -3 dB
-Filter 1: ON LP Fc 60 Hz Gain -6 dB
-Filter 2: ON PK Fc 100 Hz Gain -4 dB Q 1.0
-Filter 3: ON PK Fc 250 Hz Gain -2 dB Q 1.0
-Filter 4: ON PK Fc 1000 Hz Gain 3 dB Q 1.5
-Filter 5: ON PK Fc 2000 Hz Gain 4 dB Q 1.5
-Filter 6: ON PK Fc 3500 Hz Gain 3 dB Q 1.5
-Filter 7: ON PK Fc 6000 Hz Gain 2 dB Q 1.0
-Filter 8: ON HP Fc 10000 Hz Gain -2 dB
-""",
-    "flat": """# Flat Mode - No EQ
-Preamp: 0 dB
-""",
-    "music": """# Music Mode - Balanced
-Preamp: -2 dB
-Filter 1: ON PK Fc 60 Hz Gain 3 dB Q 1.0
-Filter 2: ON PK Fc 150 Hz Gain 2 dB Q 1.0
-Filter 3: ON PK Fc 3000 Hz Gain 1 dB Q 1.0
-Filter 4: ON PK Fc 8000 Hz Gain 2 dB Q 1.0
-Filter 5: ON PK Fc 12000 Hz Gain 2 dB Q 1.0
-""",
-}
-
-# HID++ Constants
-HIDPP_SHORT_MESSAGE = 0x10
-HIDPP_LONG_MESSAGE = 0x11
-HIDPP_DEVICE_WIRED = 0x01  # Wired devices use index 1
-HIDPP_DEVICE_WIRELESS = 0x01  # First paired device on receiver
-HIDPP_FEATURE_ROOT = 0x0000
-HIDPP_FEATURE_ADJUSTABLE_DPI = 0x2201
-
-# HID++ Function IDs
-HIDPP_ROOT_GET_FEATURE = 0x00
-HIDPP_DPI_GET_SENSOR_COUNT = 0x00
-HIDPP_DPI_GET_SENSOR_DPI_LIST = 0x10
-HIDPP_DPI_GET_SENSOR_DPI = 0x20
-HIDPP_DPI_SET_SENSOR_DPI = 0x30
-
 
 def calculate_razer_crc(data: bytes) -> int:
     """Calculate XOR checksum for Razer report (bytes 2-87)"""
@@ -235,222 +137,6 @@ def build_razer_dpi_report(dpi_x: int, dpi_y: int, transaction_id: int = 0x1f) -
     return bytes(report)
 
 
-class LogitechHIDPP:
-    """HID++ 2.0 protocol handler for Logitech mice"""
-
-    # Software ID to identify our requests (4 bits, 1-15)
-    SOFTWARE_ID = 0x07
-
-    def __init__(self, device_path, device_index=None):
-        self.device = hid.device()
-        self.device.open_path(device_path)
-        self.device.set_nonblocking(False)  # Blocking mode for reliable reads
-        self.dpi_feature_index = None
-        # Device index will be auto-detected if not specified
-        self.device_index = device_index
-
-    def close(self):
-        self.device.close()
-
-    def detect_device_index(self):
-        """Try different device indices to find one that works"""
-        # Try common indices: 0xFF (wired), 0x01 (first paired device)
-        for idx in [0xFF, 0x01]:
-            try:
-                self.device_index = idx
-                # Try to ping IRoot feature
-                msg = [0x10, idx, 0x00, (0x00 << 4) | self.SOFTWARE_ID, 0x00, 0x01, 0x00]
-                self.device.write(msg)
-
-                import time
-                start = time.time()
-                while (time.time() - start) < 0.5:
-                    data = self.device.read(64, timeout_ms=100)
-                    if data and len(data) >= 2:
-                        if data[0] in [0x10, 0x11] and data[1] == idx:
-                            print(f"DEBUG: Device index {hex(idx)} works!")
-                            return idx
-            except:
-                continue
-
-        # Default to 0xFF if nothing works
-        print("DEBUG: Could not detect device index, using 0xFF")
-        self.device_index = 0xFF
-        return 0xFF
-
-    def send_short(self, feature_idx, func_id, params=None):
-        """Send a short HID++ 2.0 message (7 bytes)"""
-        if params is None:
-            params = []
-
-        # Auto-detect device index if not set
-        if self.device_index is None:
-            self.detect_device_index()
-
-        # Format: [report_id, device_idx, feature_idx, func_id|sw_id, params...]
-        msg = [
-            HIDPP_SHORT_MESSAGE,       # 0x10
-            self.device_index,          # 0xFF for wired
-            feature_idx,
-            (func_id << 4) | self.SOFTWARE_ID
-        ]
-        msg.extend(params[:3])
-        while len(msg) < 7:
-            msg.append(0x00)
-
-        self.device.write(msg)
-        return self._read_response()
-
-    def send_long(self, feature_idx, func_id, params=None):
-        """Send a long HID++ 2.0 message (20 bytes)"""
-        if params is None:
-            params = []
-
-        msg = [
-            HIDPP_LONG_MESSAGE,        # 0x11
-            self.device_index,
-            feature_idx,
-            (func_id << 4) | self.SOFTWARE_ID
-        ]
-        msg.extend(params[:16])
-        while len(msg) < 20:
-            msg.append(0x00)
-
-        self.device.write(msg)
-        return self._read_response()
-
-    def _read_response(self, timeout_ms=3000):
-        """Read HID++ response"""
-        import time
-        start = time.time()
-
-        while (time.time() - start) * 1000 < timeout_ms:
-            # Read with timeout
-            data = self.device.read(64, timeout_ms=100)
-
-            if not data:
-                continue
-
-            # Check if this is a HID++ response (0x10 or 0x11)
-            if data[0] not in [0x10, 0x11]:
-                continue
-
-            # Check device index matches
-            if data[1] != self.device_index:
-                continue
-
-            # Check for error response (feature index 0x8F = error)
-            if data[2] == 0x8F:
-                error_code = data[5] if len(data) > 5 else 0
-                error_msgs = {
-                    0x00: "No error",
-                    0x01: "Unknown",
-                    0x02: "Invalid argument",
-                    0x03: "Out of range",
-                    0x04: "Hardware error",
-                    0x05: "Logitech internal",
-                    0x06: "Invalid feature index",
-                    0x07: "Invalid function",
-                    0x08: "Busy",
-                    0x09: "Unsupported",
-                }
-                raise Exception(f"HID++ error: {error_msgs.get(error_code, f'0x{error_code:02X}')}")
-
-            # Check software ID matches (lower 4 bits of byte 3)
-            if (data[3] & 0x0F) == self.SOFTWARE_ID:
-                return data
-
-        raise Exception("Timeout waiting for response")
-
-    def get_feature_index(self, feature_id):
-        """Get the index of a feature using IRoot (feature 0x0000)"""
-        # Auto-detect device index if not set
-        if self.device_index is None:
-            self.detect_device_index()
-
-        # IRoot.getFeature(featureId) - function 0
-        params = [(feature_id >> 8) & 0xFF, feature_id & 0xFF]
-        response = self.send_short(0x00, 0x00, params)
-
-        if response and len(response) >= 5:
-            feature_index = response[4]
-            if feature_index == 0:
-                raise Exception(f"Feature 0x{feature_id:04X} not supported")
-            return feature_index
-        raise Exception("Invalid response from device")
-
-    def init_dpi_feature(self):
-        """Initialize DPI feature index"""
-        self.dpi_feature_index = self.get_feature_index(HIDPP_FEATURE_ADJUSTABLE_DPI)
-        return self.dpi_feature_index
-
-    def set_dpi(self, dpi, sensor_idx=0):
-        """Set DPI on the device"""
-        if self.dpi_feature_index is None:
-            self.init_dpi_feature()
-
-        # setSensorDpi(sensorIdx, dpi) - function 3
-        params = [sensor_idx, (dpi >> 8) & 0xFF, dpi & 0xFF]
-        self.send_short(self.dpi_feature_index, 0x03, params)
-        return True
-
-    def get_dpi(self, sensor_idx=0):
-        """Get current DPI from the device"""
-        if self.dpi_feature_index is None:
-            self.init_dpi_feature()
-
-        # getSensorDpi(sensorIdx) - function 2
-        params = [sensor_idx]
-        response = self.send_short(self.dpi_feature_index, 0x02, params)
-
-        if response and len(response) >= 6:
-            return (response[4] << 8) | response[5]
-        return None
-
-
-def is_equalizer_apo_installed():
-    """Check if EqualizerAPO is installed"""
-    return EQUALIZER_APO_PATH.exists()
-
-
-def set_eq_preset(preset_name: str) -> bool:
-    """Set EqualizerAPO preset"""
-    if preset_name not in EQ_PRESETS:
-        raise Exception(f"Unknown preset: {preset_name}")
-
-    if not is_equalizer_apo_installed():
-        raise Exception("EqualizerAPO not installed!\n\nPlease install from:\nhttps://sourceforge.net/projects/equalizerapo/")
-
-    try:
-        # Write the preset to config.txt
-        with open(EQUALIZER_APO_CONFIG, 'w') as f:
-            f.write(EQ_PRESETS[preset_name])
-        return True
-    except PermissionError:
-        raise Exception("Cannot write to EqualizerAPO config.\nTry running as Administrator.")
-    except Exception as e:
-        raise Exception(f"Failed to set EQ: {e}")
-
-
-def get_current_eq_preset() -> str:
-    """Try to detect current EQ preset"""
-    if not is_equalizer_apo_installed():
-        return "unknown"
-
-    try:
-        with open(EQUALIZER_APO_CONFIG, 'r') as f:
-            content = f.read()
-            if "FPS Mode" in content:
-                return "fps"
-            elif "Music Mode" in content:
-                return "music"
-            elif "Flat Mode" in content or content.strip() == "" or "Preamp: 0" in content:
-                return "flat"
-    except:
-        pass
-    return "custom"
-
-
 def find_razer_mouse():
     """Find connected Razer mouse"""
     for device in hid.enumerate(RAZER_VENDOR_ID):
@@ -461,208 +147,52 @@ def find_razer_mouse():
         # Interface 0 with mouse usage (0x0002) is the control interface
         if iface == 0 and usage == 0x0002:
             name = KNOWN_RAZER_MICE.get(pid, f"Razer Mouse (0x{pid:04X})")
-            return device, name, "razer"
+            return device, name
 
     # Fallback: any interface 0
     for device in hid.enumerate(RAZER_VENDOR_ID):
         pid = device['product_id']
         if device.get('interface_number', -1) == 0:
             name = KNOWN_RAZER_MICE.get(pid, f"Razer Mouse (0x{pid:04X})")
-            return device, name, "razer"
+            return device, name
 
-    return None, None, None
-
-
-def find_logitech_devices_by_pid(pid):
-    """Find all HID interfaces for a Logitech device"""
-    devices = {}
-    for device in hid.enumerate(LOGITECH_VENDOR_ID):
-        if device['product_id'] == pid:
-            usage = device.get('usage', 0)
-            usage_page = device.get('usage_page', 0)
-            # On Windows, usage indicates the interface type
-            # usage 1 = short messages, usage 2 = long messages
-            if usage_page == 0xFF00:
-                devices[usage] = device
-    return devices
-
-
-def find_logitech_mouse():
-    """Find connected Logitech mouse with HID++ support"""
-    # Look for known gaming mice
-    for device in hid.enumerate(LOGITECH_VENDOR_ID):
-        pid = device['product_id']
-        if pid in KNOWN_LOGITECH_MICE:
-            # Get all interfaces for this device
-            interfaces = find_logitech_devices_by_pid(pid)
-            name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
-
-            # Prefer usage 2 (long messages) for HID++ 2.0
-            if 2 in interfaces:
-                return interfaces[2], name, "logitech"
-            # Fallback to usage 1 (short messages)
-            elif 1 in interfaces:
-                return interfaces[1], name, "logitech"
-            # Last resort: any vendor page interface
-            elif interfaces:
-                return list(interfaces.values())[0], name, "logitech"
-
-    return None, None, None
-
-
-def find_any_mouse():
-    """Find any supported mouse (Razer or Logitech)"""
-    # Try Razer first
-    device, name, brand = find_razer_mouse()
-    if device:
-        return device, name, brand
-
-    # Try Logitech
-    device, name, brand = find_logitech_mouse()
-    if device:
-        return device, name, brand
-
-    return None, None, None
-
-
-def find_all_mice():
-    """Find all supported mice"""
-    mice = []
-
-    # Find Razer mice
-    for device in hid.enumerate(RAZER_VENDOR_ID):
-        pid = device['product_id']
-        iface = device.get('interface_number', -1)
-        usage = device.get('usage', 0)
-
-        if iface == 0 and usage == 0x0002:
-            name = KNOWN_RAZER_MICE.get(pid, f"Razer Mouse (0x{pid:04X})")
-            mice.append((device, name, "razer"))
-            break  # Only add one Razer device
-
-    if not any(m[2] == "razer" for m in mice):
-        for device in hid.enumerate(RAZER_VENDOR_ID):
-            pid = device['product_id']
-            if device.get('interface_number', -1) == 0:
-                name = KNOWN_RAZER_MICE.get(pid, f"Razer Mouse (0x{pid:04X})")
-                mice.append((device, name, "razer"))
-                break
-
-    # Find Logitech mice - prefer usage 2 (long messages)
-    found_logitech = set()
-    for device in hid.enumerate(LOGITECH_VENDOR_ID):
-        pid = device['product_id']
-        if pid in KNOWN_LOGITECH_MICE and pid not in found_logitech:
-            interfaces = find_logitech_devices_by_pid(pid)
-            name = KNOWN_LOGITECH_MICE.get(pid, f"Logitech Mouse (0x{pid:04X})")
-
-            # Prefer usage 2 for HID++ 2.0
-            if 2 in interfaces:
-                mice.append((interfaces[2], name, "logitech"))
-                found_logitech.add(pid)
-            elif 1 in interfaces:
-                mice.append((interfaces[1], name, "logitech"))
-                found_logitech.add(pid)
-            elif interfaces:
-                mice.append((list(interfaces.values())[0], name, "logitech"))
-                found_logitech.add(pid)
-
-    return mice
+    return None, None
 
 
 def set_razer_dpi(device_info, dpi: int) -> bool:
     """Set DPI on Razer mouse"""
-    try:
-        device = hid.device()
-        device.open_path(device_info['path'])
-        report = build_razer_dpi_report(dpi, dpi)
-        result = device.send_feature_report(b'\x00' + report)
-        device.close()
+    device = hid.device()
+    device.open_path(device_info['path'])
+    report = build_razer_dpi_report(dpi, dpi)
+    result = device.send_feature_report(b'\x00' + report)
+    device.close()
 
-        if result < 0:
-            raise Exception("send_feature_report failed")
-        return True
-    except Exception as e:
-        raise Exception(f"Failed to set DPI: {e}")
-
-
-def set_logitech_dpi(device_info, dpi: int) -> bool:
-    """Set DPI on Logitech mouse using HID++"""
-    pid = device_info.get('product_id', 0)
-
-    # Get all interfaces for this device and try each one
-    interfaces = find_logitech_devices_by_pid(pid)
-
-    # Try order: usage 2, usage 1, then any other
-    try_order = []
-    if 2 in interfaces:
-        try_order.append(interfaces[2])
-    if 1 in interfaces:
-        try_order.append(interfaces[1])
-    for usage, dev in interfaces.items():
-        if usage not in [1, 2]:
-            try_order.append(dev)
-
-    # Also add the originally selected device if not in list
-    if device_info not in try_order:
-        try_order.insert(0, device_info)
-
-    last_error = None
-    for dev in try_order:
-        try:
-            print(f"DEBUG: Trying PID=0x{dev.get('product_id', 0):04X}, usage={dev.get('usage', 0)}, usage_page=0x{dev.get('usage_page', 0):04X}, iface={dev.get('interface_number', -1)}")
-
-            hidpp = LogitechHIDPP(dev['path'])
-            hidpp.set_dpi(dpi)
-            hidpp.close()
-            print(f"DEBUG: Success with usage={dev.get('usage', 0)}")
-            return True
-        except Exception as e:
-            last_error = e
-            print(f"DEBUG: Failed with usage={dev.get('usage', 0)}: {e}")
-            continue
-
-    raise Exception(f"Failed to set DPI: {last_error}")
-
-
-def set_dpi(device_info, brand: str, dpi: int) -> bool:
-    """Set DPI on any supported mouse"""
-    if brand == "razer":
-        return set_razer_dpi(device_info, dpi)
-    elif brand == "logitech":
-        return set_logitech_dpi(device_info, dpi)
-    else:
-        raise Exception(f"Unknown brand: {brand}")
+    if result < 0:
+        raise Exception("send_feature_report failed")
+    return True
 
 
 class DPIApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Gaming Tool")
-        self.root.geometry("380x480")
+        self.root.title("Razer DPI Tool")
+        self.root.geometry("320x280")
         self.root.resizable(False, False)
 
         self.current_device = None
-        self.current_brand = None
-        self.mice_list = []
-        self.current_eq = "unknown"
+        self.mouse_name = None
 
-        # Device selection
-        device_frame = ttk.LabelFrame(self.root, text="Mouse", padding=10)
-        device_frame.pack(fill='x', padx=20, pady=10)
+        # Mouse frame
+        mouse_frame = ttk.LabelFrame(self.root, text="Mouse", padding=10)
+        mouse_frame.pack(fill='x', padx=20, pady=10)
 
-        self.device_combo = ttk.Combobox(device_frame, state='readonly', width=32)
-        self.device_combo.pack(side='left', padx=5)
-        self.device_combo.bind('<<ComboboxSelected>>', self.on_device_select)
-
-        refresh_btn = ttk.Button(device_frame, text="Refresh", command=self.refresh)
-        refresh_btn.pack(side='left', padx=5)
-
-        # Status label
         self.status_var = tk.StringVar()
         self.status_var.set("Click Refresh to scan")
-        status_label = ttk.Label(self.root, textvariable=self.status_var)
-        status_label.pack(pady=5)
+        status_label = ttk.Label(mouse_frame, textvariable=self.status_var)
+        status_label.pack(side='left', padx=5)
+
+        refresh_btn = ttk.Button(mouse_frame, text="Refresh", command=self.refresh)
+        refresh_btn.pack(side='right', padx=5)
 
         # Preset DPI buttons frame
         preset_frame = ttk.LabelFrame(self.root, text="Preset DPI", padding=10)
@@ -693,113 +223,46 @@ class DPIApp:
         )
         apply_btn.pack(side='left', padx=5)
 
-        # DPI Result label
+        # Result label
         self.result_var = tk.StringVar()
         result_label = ttk.Label(self.root, textvariable=self.result_var)
-        result_label.pack(pady=5)
-
-        # Separator
-        ttk.Separator(self.root, orient='horizontal').pack(fill='x', padx=20, pady=10)
-
-        # Audio EQ Frame
-        eq_frame = ttk.LabelFrame(self.root, text="Audio EQ (EqualizerAPO)", padding=10)
-        eq_frame.pack(fill='x', padx=20, pady=5)
-
-        # EQ Status
-        self.eq_status_var = tk.StringVar()
-        self.update_eq_status()
-        eq_status_label = ttk.Label(eq_frame, textvariable=self.eq_status_var)
-        eq_status_label.pack(pady=5)
-
-        # EQ Buttons
-        eq_btn_frame = ttk.Frame(eq_frame)
-        eq_btn_frame.pack(fill='x', pady=5)
-
-        self.fps_btn = ttk.Button(
-            eq_btn_frame,
-            text="FPS Mode",
-            command=lambda: self.apply_eq("fps"),
-            width=12
-        )
-        self.fps_btn.pack(side='left', padx=5, expand=True)
-
-        self.music_btn = ttk.Button(
-            eq_btn_frame,
-            text="Music Mode",
-            command=lambda: self.apply_eq("music"),
-            width=12
-        )
-        self.music_btn.pack(side='left', padx=5, expand=True)
-
-        self.flat_btn = ttk.Button(
-            eq_btn_frame,
-            text="Flat (Off)",
-            command=lambda: self.apply_eq("flat"),
-            width=12
-        )
-        self.flat_btn.pack(side='left', padx=5, expand=True)
-
-        # EQ Result
-        self.eq_result_var = tk.StringVar()
-        eq_result_label = ttk.Label(eq_frame, textvariable=self.eq_result_var)
-        eq_result_label.pack(pady=5)
+        result_label.pack(pady=10)
 
         # Info
         info_label = ttk.Label(
             self.root,
-            text="Razer/Logitech DPI + EqualizerAPO EQ",
+            text="No Synapse required",
             foreground="gray"
         )
-        info_label.pack(pady=10)
+        info_label.pack(pady=5)
 
         # Auto-refresh on start
         self.root.after(100, self.refresh)
 
-    def update_eq_status(self):
-        if not is_equalizer_apo_installed():
-            self.eq_status_var.set("EqualizerAPO: Not installed")
-            self.current_eq = "not_installed"
-        else:
-            self.current_eq = get_current_eq_preset()
-            preset_names = {"fps": "FPS Mode", "music": "Music Mode", "flat": "Flat", "custom": "Custom", "unknown": "Unknown"}
-            self.eq_status_var.set(f"Current: {preset_names.get(self.current_eq, self.current_eq)}")
-
     def refresh(self):
-        self.mice_list = find_all_mice()
-        self.device_combo['values'] = []
+        device, name = find_razer_mouse()
 
-        if self.mice_list:
-            names = [f"[{m[2].upper()}] {m[1]}" for m in self.mice_list]
-            self.device_combo['values'] = names
-            self.device_combo.current(0)
-            self.on_device_select(None)
+        if device:
+            self.current_device = device
+            self.mouse_name = name
+            self.status_var.set(name)
+            self.result_var.set("")
         else:
             self.current_device = None
-            self.current_brand = None
-            self.status_var.set("No mice found!")
-            self.result_var.set("")
-
-        self.update_eq_status()
-
-    def on_device_select(self, event):
-        idx = self.device_combo.current()
-        if idx >= 0 and idx < len(self.mice_list):
-            self.current_device = self.mice_list[idx][0]
-            self.current_brand = self.mice_list[idx][2]
-            name = self.mice_list[idx][1]
-            self.status_var.set(f"Selected: {name}")
+            self.mouse_name = None
+            self.status_var.set("No Razer mouse found!")
             self.result_var.set("")
 
     def apply_dpi(self, dpi: int):
         if not self.current_device:
-            messagebox.showerror("Error", "No device selected!\nClick Refresh to scan.")
+            messagebox.showerror("Error", "No Razer mouse found!\nClick Refresh to scan.")
             return
 
         try:
-            set_dpi(self.current_device, self.current_brand, dpi)
+            set_razer_dpi(self.current_device, dpi)
             self.result_var.set(f"DPI set to {dpi}")
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            messagebox.showerror("Error", f"Failed to set DPI: {e}")
             self.result_var.set("Failed!")
 
     def apply_custom_dpi(self):
@@ -811,16 +274,6 @@ class DPIApp:
             self.apply_dpi(dpi)
         except ValueError:
             messagebox.showwarning("Warning", "Please enter a valid number")
-
-    def apply_eq(self, preset: str):
-        try:
-            set_eq_preset(preset)
-            preset_names = {"fps": "FPS Mode", "music": "Music Mode", "flat": "Flat"}
-            self.eq_result_var.set(f"EQ: {preset_names.get(preset, preset)} applied!")
-            self.update_eq_status()
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
-            self.eq_result_var.set("Failed!")
 
     def run(self):
         self.root.mainloop()
