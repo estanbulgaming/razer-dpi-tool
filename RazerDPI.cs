@@ -314,13 +314,13 @@ class RazerDPI : Form
             byte[] report = BuildDPIReport(dpi);
             if (HidD_SetFeature(handle, report, (uint)report.Length))
             {
-                resultLabel.Text = $"DPI set to {dpi}";
+                resultLabel.Text = "DPI set to " + dpi.ToString();
                 resultLabel.ForeColor = Color.Green;
             }
             else
             {
                 int error = Marshal.GetLastWin32Error();
-                MessageBox.Show($"Failed to set DPI. Error code: {error}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Failed to set DPI. Error code: " + error.ToString(), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 resultLabel.Text = "Failed!";
                 resultLabel.ForeColor = Color.Red;
             }
